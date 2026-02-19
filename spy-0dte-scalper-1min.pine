@@ -523,7 +523,7 @@ if barstate.islast and i_showDash
     cellSize = getDashSize(sz)
 
     // --- Row 0: Header ---
-    table.cell(dash, 0, 0, "  SPY 0DTE DASH  ", text_color=#FFFFFF,
+    table.cell(dash, 0, 0, "  SPY 0DTE Scalper Dashboard  ", text_color=#FFFFFF,
          bgcolor=C_DASH_HEADER, text_size=cellSize, text_halign=text.align_center)
     table.cell(dash, 1, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
     table.cell(dash, 2, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
