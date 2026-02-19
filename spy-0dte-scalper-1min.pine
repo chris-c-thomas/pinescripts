@@ -1,0 +1,675 @@
+// ============================================================================
+// SPY 0DTE Scalper
+// Timeframe: 1-minute
+// Version: 1.0.0
+// Author: Chris Thomas
+// ============================================================================
+
+// ============================================================================
+// TradingView Pine Script v6
+// ============================================================================
+//@version=6
+indicator(
+     title     = "SPY 0DTE Scalper",
+     shorttitle = "SPY-0DTE",
+     overlay   = true,
+     max_labels_count  = 500,
+     max_lines_count   = 500,
+     max_boxes_count   = 200,
+     max_bars_back     = 5000
+ )
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+var string GP_EMA     = "EMA Ribbon"
+var string GP_VWAP    = "VWAP"
+var string GP_RSI     = "RSI"
+var string GP_ADX     = "ADX"
+var string GP_ATR     = "ATR"
+var string GP_LEVELS  = "Key Levels"
+var string GP_SESSION = "Session & Time"
+var string GP_SIGNALS = "Signal Logic"
+var string GP_DASH    = "Dashboard"
+
+// Colors — vibrant, dark-theme optimized
+var color C_VWAP         = #FFFFFF
+var color C_VWAP_BAND    = #00BCD4
+var color C_EMA_FAST     = #FFD600
+var color C_EMA_MID      = #FF9100
+var color C_EMA_SLOW     = #FF1744
+var color C_CLOUD_BULL   = color.new(#00E676, 85)
+var color C_CLOUD_BEAR   = color.new(#FF1744, 85)
+var color C_CLOUD_MIXED  = color.new(#FFD600, 90)
+var color C_PM_HIGH      = #FF5252
+var color C_PM_LOW       = #69F0AE
+var color C_PDH          = #FF6E40
+var color C_PDL          = #64FFDA
+var color C_PDC          = #B0BEC5
+var color C_OR_HIGH      = #E040FB
+var color C_OR_LOW       = #B388FF
+var color C_CALLS        = #00E676
+var color C_PUTS         = #FF1744
+var color C_BG_CALLS     = color.new(#00E676, 92)
+var color C_BG_PUTS      = color.new(#FF1744, 92)
+var color C_DASH_BG      = color.new(#1A1A2E, 5)
+var color C_DASH_HEADER  = #7C4DFF
+var color C_DASH_TEXT     = #E0E0E0
+var color C_GREEN        = #00E676
+var color C_RED          = #FF1744
+var color C_YELLOW       = #FFD600
+var color C_GRAY         = #616161
+var color C_NEUTRAL      = #B0BEC5
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// --- EMA Ribbon ---
+i_emaFastLen   = input.int(8,    "Fast EMA Length",         minval=2, group=GP_EMA)
+i_emaMidLen    = input.int(13,   "Mid EMA Length",          minval=2, group=GP_EMA)
+i_emaSlowLen   = input.int(21,   "Slow EMA Length",         minval=2, group=GP_EMA)
+i_showEmaCloud = input.bool(true, "Show EMA Cloud Fill",    group=GP_EMA)
+
+// --- VWAP ---
+i_showVwap      = input.bool(true,  "Show VWAP",              group=GP_VWAP)
+i_showVwapBands = input.bool(true,  "Show VWAP +/- 1 StdDev", group=GP_VWAP)
+i_vwapBandMult  = input.float(1.0,  "VWAP Band Multiplier",   minval=0.5, maxval=3.0, step=0.25, group=GP_VWAP)
+
+// --- RSI ---
+i_rsiLen = input.int(14, "RSI Length",       minval=2, group=GP_RSI)
+i_rsiOB  = input.int(70, "RSI Overbought",  minval=50, maxval=95, group=GP_RSI)
+i_rsiOS  = input.int(30, "RSI Oversold",    minval=5,  maxval=50, group=GP_RSI)
+
+// --- ADX ---
+i_adxLen     = input.int(14, "ADX Length",                    minval=2, group=GP_ADX)
+i_adxNoTrend = input.int(15, "ADX No-Trend Threshold",       minval=5,  maxval=30, group=GP_ADX)
+i_adxTrend   = input.int(25, "ADX Trending Threshold",       minval=15, maxval=50, group=GP_ADX)
+i_adxStrong  = input.int(40, "ADX Strong Trend Threshold",   minval=25, maxval=60, group=GP_ADX)
+
+// --- ATR ---
+i_atrLen = input.int(14, "ATR Length", minval=2, group=GP_ATR)
+
+// --- Key Levels ---
+i_showPM     = input.bool(true, "Show Pre-Market High/Low",     group=GP_LEVELS)
+i_showPD     = input.bool(true, "Show Prior Day H/L/C",         group=GP_LEVELS)
+i_showOR     = input.bool(true, "Show Opening Range",            group=GP_LEVELS)
+i_orMinutes  = input.int(5,     "Opening Range Minutes",         minval=1, maxval=30, group=GP_LEVELS)
+i_showHODLOD = input.bool(true, "Show Current Session HOD/LOD",  group=GP_LEVELS)
+
+// --- Session ---
+i_pmSession  = input.session("0400-0930", "Pre-Market Session",    group=GP_SESSION)
+i_rthSession = input.session("0930-1600", "Regular Trading Hours",  group=GP_SESSION)
+i_tz         = input.string("America/New_York", "Timezone",         group=GP_SESSION,
+                 options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
+
+// --- Signal Logic ---
+i_showSignals   = input.bool(true,  "Show CALLS / PUTS Signals",         group=GP_SIGNALS)
+i_cooldownBars  = input.int(5,      "Signal Cooldown (bars)",             minval=1, maxval=30, group=GP_SIGNALS)
+i_signalStart   = input.session("0935-1545", "Signal Time Window",       group=GP_SIGNALS)
+i_requireADX    = input.bool(true,  "Require ADX Above No-Trend",        group=GP_SIGNALS)
+i_showVwapCross = input.bool(true,  "Show VWAP Cross Markers",           group=GP_SIGNALS)
+i_vwapExtFilter = input.float(1.5,  "Max VWAP Distance (ATR multiples)", minval=0.5, maxval=5.0, step=0.25, group=GP_SIGNALS)
+
+// --- Dashboard ---
+i_showDash = input.bool(true,     "Show Dashboard",      group=GP_DASH)
+i_dashSize = input.string("normal", "Dashboard Text Size", options=["tiny", "small", "normal", "large"], group=GP_DASH)
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+// Map dashboard size string to size constant
+getDashSize(string s) =>
+    switch s
+        "tiny"  => size.tiny
+        "small" => size.small
+        "large" => size.large
+        => size.normal
+
+// Check if current bar falls within a given session
+inSession(string sess) =>
+    not na(time(timeframe.period, sess, i_tz))
+
+// Format a float to 2 decimal places
+f2(float val) =>
+    str.tostring(val, "#.##")
+
+// Return green for positive, red for negative
+posnegColor(float val) =>
+    val >= 0 ? C_GREEN : C_RED
+
+// ============================================================================
+// CORE INDICATOR CALCULATIONS
+// ============================================================================
+
+// --- EMA Ribbon ---
+emaFast = ta.ema(close, i_emaFastLen)
+emaMid  = ta.ema(close, i_emaMidLen)
+emaSlow = ta.ema(close, i_emaSlowLen)
+
+bool emaBullish = emaFast > emaMid and emaMid > emaSlow
+bool emaBearish = emaFast < emaMid and emaMid < emaSlow
+
+color emaCloudColor = emaBullish ? C_CLOUD_BULL : emaBearish ? C_CLOUD_BEAR : C_CLOUD_MIXED
+
+// --- VWAP + Standard Deviation Bands ---
+float vwapValue  = ta.vwap(hlc3)
+float vwapCumVol = ta.cum(volume)
+float vwapCumPV  = ta.cum(hlc3 * volume)
+float vwapCumPV2 = ta.cum(hlc3 * hlc3 * volume)
+float vwapMean   = vwapCumPV / vwapCumVol
+float vwapVar    = math.max(vwapCumPV2 / vwapCumVol - vwapMean * vwapMean, 0)
+float vwapStdev  = math.sqrt(vwapVar)
+float vwapUpper  = vwapValue + vwapStdev * i_vwapBandMult
+float vwapLower  = vwapValue - vwapStdev * i_vwapBandMult
+float vwapDist   = close - vwapValue
+
+// --- RSI ---
+float rsiValue = ta.rsi(close, i_rsiLen)
+
+getRsiLabel() =>
+    if rsiValue > i_rsiOB
+        "OVERBOUGHT"
+    else if rsiValue < i_rsiOS
+        "OVERSOLD"
+    else
+        "NEUTRAL"
+
+getRsiColor() =>
+    if rsiValue > i_rsiOB
+        C_RED
+    else if rsiValue < i_rsiOS
+        C_GREEN
+    else
+        C_NEUTRAL
+
+// --- ADX with DI+/DI- ---
+[diPlus, diMinus, adxValue] = ta.dmi(i_adxLen, i_adxLen)
+
+getAdxLabel() =>
+    if adxValue >= i_adxStrong
+        "STRONG TREND"
+    else if adxValue >= i_adxTrend
+        "TRENDING"
+    else if adxValue >= i_adxNoTrend
+        "WEAK/RANGING"
+    else
+        "NO TREND"
+
+getAdxColor() =>
+    if adxValue >= i_adxTrend
+        C_GREEN
+    else if adxValue >= i_adxNoTrend
+        C_YELLOW
+    else
+        C_RED
+
+// --- ATR ---
+float atrValue = ta.atr(i_atrLen)
+
+// ============================================================================
+// SESSION DETECTION & KEY LEVELS
+// ============================================================================
+
+bool isRTH    = inSession(i_rthSession)
+bool isPM     = inSession(i_pmSession)
+bool rthStart = isRTH and not isRTH[1]
+
+// --- Pre-Market High / Low ---
+var float pmHigh = na
+var float pmLow  = na
+
+if isPM
+    if na(pmHigh) or not isPM[1]
+        pmHigh := high
+        pmLow  := low
+    else
+        pmHigh := math.max(pmHigh, high)
+        pmLow  := math.min(pmLow, low)
+
+// --- Prior Day High / Low / Close ---
+float pdHigh  = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+float pdLow   = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+float pdClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+
+// --- Opening Range ---
+var float orHigh     = na
+var float orLow      = na
+var bool  orComplete = false
+var int   orBars     = 0
+
+if rthStart
+    orHigh     := high
+    orLow      := low
+    orComplete := false
+    orBars     := 1
+else if isRTH and not orComplete
+    orBars += 1
+    orHigh := math.max(orHigh, high)
+    orLow  := math.min(orLow, low)
+    if orBars >= i_orMinutes
+        orComplete := true
+
+// --- Current Session HOD / LOD ---
+var float sessionHigh = na
+var float sessionLow  = na
+
+if rthStart
+    sessionHigh := high
+    sessionLow  := low
+else if isRTH
+    sessionHigh := math.max(nz(sessionHigh, high), high)
+    sessionLow  := math.min(nz(sessionLow, low), low)
+
+// ============================================================================
+// REGIME / MODE ENGINE
+// ============================================================================
+
+getMode() =>
+    if adxValue < i_adxNoTrend and math.abs(vwapDist) < atrValue * 0.5
+        "NO TRADE"
+    else if adxValue < i_adxNoTrend
+        "RANGING"
+    else if adxValue >= i_adxNoTrend and emaBullish and close > vwapValue
+        "BULLISH"
+    else if adxValue >= i_adxNoTrend and emaBearish and close < vwapValue
+        "BEARISH"
+    else if adxValue >= i_adxTrend
+        "TRANSITION"
+    else
+        "RANGING"
+
+string currentMode = getMode()
+
+getModeColor() =>
+    switch currentMode
+        "BULLISH"    => C_GREEN
+        "BEARISH"    => C_RED
+        "RANGING"    => C_YELLOW
+        "TRANSITION" => #FF9100
+        "NO TRADE"   => C_GRAY
+        => C_NEUTRAL
+
+// ============================================================================
+// SIGNAL LOGIC
+// ============================================================================
+
+// --- Shared filter conditions ---
+bool inSignalWindow = inSession(i_signalStart)
+bool adxFilter      = not i_requireADX or adxValue >= i_adxNoTrend
+bool vwapExtended   = math.abs(vwapDist) > atrValue * i_vwapExtFilter
+bool barConfirmed   = barstate.isconfirmed
+
+// --- Cooldown tracking ---
+var int barsSinceSignal = 999
+barsSinceSignal += 1
+
+// --- Candle pattern detection ---
+bool bullishEngulfing = close > open and close > high[1] and open <= low[1]
+bool bearishEngulfing = close < open and close < low[1]  and open >= high[1]
+bool strongBullClose  = close > open and (close - open) > (high - low) * 0.5
+bool strongBearClose  = close < open and (open - close) > (high - low) * 0.5
+bool hammer           = close > open and (open - low)   > (close - open) * 2 and (high - close) < (close - open) * 0.5
+bool shootingStar     = close < open and (high - open)  > (open - close) * 2 and (close - low)  < (open - close) * 0.5
+
+// --- CALLS (bullish entry) conditions ---
+bool callsBase    = barConfirmed and inSignalWindow and adxFilter and not vwapExtended and barsSinceSignal >= i_cooldownBars
+bool callsVwapOk  = close > vwapValue or (close > vwapValue - atrValue * 0.3 and close[1] < vwapValue)
+bool callsEmaOk   = emaFast > emaSlow or (close > emaSlow and close[1] < emaSlow)
+bool callsRsiOk   = rsiValue > i_rsiOS and rsiValue < i_rsiOB
+bool callsCandle  = bullishEngulfing or strongBullClose or hammer
+bool callsSignal  = callsBase and callsVwapOk and callsEmaOk and callsRsiOk and callsCandle
+
+// --- PUTS (bearish entry) conditions ---
+bool putsBase    = barConfirmed and inSignalWindow and adxFilter and not vwapExtended and barsSinceSignal >= i_cooldownBars
+bool putsVwapOk  = close < vwapValue or (close < vwapValue + atrValue * 0.3 and close[1] > vwapValue)
+bool putsEmaOk   = emaFast < emaSlow or (close < emaSlow and close[1] > emaSlow)
+bool putsRsiOk   = rsiValue > i_rsiOS and rsiValue < i_rsiOB
+bool putsCandle  = bearishEngulfing or strongBearClose or shootingStar
+bool putsSignal  = putsBase and putsVwapOk and putsEmaOk and putsRsiOk and putsCandle
+
+// Reset cooldown on signal fire
+if callsSignal or putsSignal
+    barsSinceSignal := 0
+
+// --- VWAP cross detection ---
+bool vwapCrossUp   = ta.crossover(close, vwapValue)
+bool vwapCrossDown = ta.crossunder(close, vwapValue)
+
+// ============================================================================
+// PLOTS — EMA RIBBON
+// ============================================================================
+
+pFast = plot(emaFast, "EMA Fast", C_EMA_FAST, linewidth=1)
+pMid  = plot(emaMid,  "EMA Mid",  C_EMA_MID,  linewidth=1)
+pSlow = plot(emaSlow, "EMA Slow", C_EMA_SLOW, linewidth=1)
+
+fill(pFast, pSlow, color=i_showEmaCloud ? emaCloudColor : color.new(color.white, 100), title="EMA Cloud")
+
+// ============================================================================
+// PLOTS — VWAP + BANDS
+// ============================================================================
+
+plot(i_showVwap     ? vwapValue : na, "VWAP",       C_VWAP,      linewidth=2)
+plot(i_showVwapBands ? vwapUpper : na, "VWAP +1 SD", C_VWAP_BAND, linewidth=1, style=plot.style_circles)
+plot(i_showVwapBands ? vwapLower : na, "VWAP -1 SD", C_VWAP_BAND, linewidth=1, style=plot.style_circles)
+
+// ============================================================================
+// KEY LEVELS — HORIZONTAL LINES WITH LABELS
+// ============================================================================
+
+// --- Pre-Market High / Low ---
+var line  pmHighLine = na
+var line  pmLowLine  = na
+var label pmHighLbl  = na
+var label pmLowLbl   = na
+
+if barstate.islast and i_showPM and not na(pmHigh) and isRTH
+    if not na(pmHighLine)
+        line.delete(pmHighLine)
+        line.delete(pmLowLine)
+        label.delete(pmHighLbl)
+        label.delete(pmLowLbl)
+
+    pmHighLine := line.new(bar_index - 300, pmHigh, bar_index + 20, pmHigh,
+         color=C_PM_HIGH, style=line.style_dashed, width=1)
+    pmLowLine  := line.new(bar_index - 300, pmLow, bar_index + 20, pmLow,
+         color=C_PM_LOW, style=line.style_dashed, width=1)
+    pmHighLbl  := label.new(bar_index + 22, pmHigh, "PM HIGH  " + f2(pmHigh),
+         style=label.style_label_left, color=color.new(C_PM_HIGH, 80),
+         textcolor=C_PM_HIGH, size=size.small)
+    pmLowLbl   := label.new(bar_index + 22, pmLow, "PM LOW  " + f2(pmLow),
+         style=label.style_label_left, color=color.new(C_PM_LOW, 80),
+         textcolor=C_PM_LOW, size=size.small)
+
+// --- Prior Day High / Low / Close ---
+var line  pdhLine = na
+var line  pdlLine = na
+var line  pdcLine = na
+var label pdhLbl  = na
+var label pdlLbl  = na
+var label pdcLbl  = na
+
+if barstate.islast and i_showPD and not na(pdHigh)
+    if not na(pdhLine)
+        line.delete(pdhLine)
+        line.delete(pdlLine)
+        line.delete(pdcLine)
+        label.delete(pdhLbl)
+        label.delete(pdlLbl)
+        label.delete(pdcLbl)
+
+    pdhLine := line.new(bar_index - 300, pdHigh, bar_index + 20, pdHigh,
+         color=C_PDH, style=line.style_dotted, width=1)
+    pdlLine := line.new(bar_index - 300, pdLow, bar_index + 20, pdLow,
+         color=C_PDL, style=line.style_dotted, width=1)
+    pdcLine := line.new(bar_index - 300, pdClose, bar_index + 20, pdClose,
+         color=C_PDC, style=line.style_dotted, width=1)
+    pdhLbl  := label.new(bar_index + 22, pdHigh, "PDH  " + f2(pdHigh),
+         style=label.style_label_left, color=color.new(C_PDH, 80),
+         textcolor=C_PDH, size=size.small)
+    pdlLbl  := label.new(bar_index + 22, pdLow, "PDL  " + f2(pdLow),
+         style=label.style_label_left, color=color.new(C_PDL, 80),
+         textcolor=C_PDL, size=size.small)
+    pdcLbl  := label.new(bar_index + 22, pdClose, "PDC  " + f2(pdClose),
+         style=label.style_label_left, color=color.new(C_PDC, 80),
+         textcolor=C_PDC, size=size.small)
+
+// --- Opening Range ---
+var line  orHighLine = na
+var line  orLowLine  = na
+var label orHighLbl  = na
+var label orLowLbl   = na
+
+if barstate.islast and i_showOR and orComplete and not na(orHigh)
+    if not na(orHighLine)
+        line.delete(orHighLine)
+        line.delete(orLowLine)
+        label.delete(orHighLbl)
+        label.delete(orLowLbl)
+
+    orHighLine := line.new(bar_index - 300, orHigh, bar_index + 20, orHigh,
+         color=C_OR_HIGH, style=line.style_dashed, width=1)
+    orLowLine  := line.new(bar_index - 300, orLow, bar_index + 20, orLow,
+         color=C_OR_LOW, style=line.style_dashed, width=1)
+    orHighLbl  := label.new(bar_index + 22, orHigh, "OR HIGH  " + f2(orHigh),
+         style=label.style_label_left, color=color.new(C_OR_HIGH, 80),
+         textcolor=C_OR_HIGH, size=size.small)
+    orLowLbl   := label.new(bar_index + 22, orLow, "OR LOW  " + f2(orLow),
+         style=label.style_label_left, color=color.new(C_OR_LOW, 80),
+         textcolor=C_OR_LOW, size=size.small)
+
+// --- Current Session HOD / LOD ---
+var line  hodLine = na
+var line  lodLine = na
+var label hodLbl  = na
+var label lodLbl  = na
+
+if barstate.islast and i_showHODLOD and isRTH and not na(sessionHigh)
+    if not na(hodLine)
+        line.delete(hodLine)
+        line.delete(lodLine)
+        label.delete(hodLbl)
+        label.delete(lodLbl)
+
+    hodLine := line.new(bar_index - 300, sessionHigh, bar_index + 20, sessionHigh,
+         color=C_GREEN, style=line.style_solid, width=1)
+    lodLine := line.new(bar_index - 300, sessionLow, bar_index + 20, sessionLow,
+         color=C_RED, style=line.style_solid, width=1)
+    hodLbl  := label.new(bar_index + 22, sessionHigh, "HOD  " + f2(sessionHigh),
+         style=label.style_label_left, color=color.new(C_GREEN, 80),
+         textcolor=C_GREEN, size=size.small)
+    lodLbl  := label.new(bar_index + 22, sessionLow, "LOD  " + f2(sessionLow),
+         style=label.style_label_left, color=color.new(C_RED, 80),
+         textcolor=C_RED, size=size.small)
+
+// ============================================================================
+// SIGNAL VISUAL CUES
+// ============================================================================
+
+// Background highlight on signal bars
+bgcolor(i_showSignals and callsSignal ? C_BG_CALLS : na, title="CALLS Background Flash")
+bgcolor(i_showSignals and putsSignal  ? C_BG_PUTS  : na, title="PUTS Background Flash")
+
+// Arrow shapes for fast scanning
+plotshape(i_showSignals and callsSignal, title="CALLS Arrow", style=shape.triangleup,
+     location=location.belowbar, color=C_CALLS, size=size.tiny)
+plotshape(i_showSignals and putsSignal,  title="PUTS Arrow",  style=shape.triangledown,
+     location=location.abovebar, color=C_PUTS,  size=size.tiny)
+
+// Detailed text labels with hover tooltip
+if i_showSignals and callsSignal
+    string tip = "RSI: " + f2(rsiValue) + "  |  ADX: " + f2(adxValue) +
+         "\nVWAP Dist: " + f2(vwapDist) + "  |  Mode: " + currentMode +
+         "\nATR: " + f2(atrValue) + "  |  EMA: " + (emaBullish ? "BULL" : emaBearish ? "BEAR" : "MIXED")
+    label.new(bar_index, low, "CALLS",
+         style=label.style_label_up, color=C_CALLS,
+         textcolor=color.black, size=size.small, tooltip=tip)
+
+if i_showSignals and putsSignal
+    string tip = "RSI: " + f2(rsiValue) + "  |  ADX: " + f2(adxValue) +
+         "\nVWAP Dist: " + f2(vwapDist) + "  |  Mode: " + currentMode +
+         "\nATR: " + f2(atrValue) + "  |  EMA: " + (emaBullish ? "BULL" : emaBearish ? "BEAR" : "MIXED")
+    label.new(bar_index, high, "PUTS",
+         style=label.style_label_down, color=C_PUTS,
+         textcolor=color.white, size=size.small, tooltip=tip)
+
+// VWAP cross markers
+plotshape(i_showVwapCross and vwapCrossUp   and barConfirmed, title="VWAP Cross Bullish",
+     style=shape.diamond, location=location.belowbar, color=#76FF03, size=size.tiny)
+plotshape(i_showVwapCross and vwapCrossDown and barConfirmed, title="VWAP Cross Bearish",
+     style=shape.diamond, location=location.abovebar, color=C_PUTS,  size=size.tiny)
+
+// ============================================================================
+// DASHBOARD TABLE
+// ============================================================================
+
+var table dash = table.new(position.top_right, 3, 14,
+     bgcolor    = C_DASH_BG,
+     border_width = 0,
+     border_color = color.new(#FFFFFF, 85),
+     frame_width  = 1,
+     frame_color  = color.new(#FFFFFF, 80))
+
+// Pre-fetch daily open for day change calculation (avoid calling inside if block)
+float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+float avgVol  = ta.sma(volume, 20)
+
+if barstate.islast and i_showDash
+    string sz = i_dashSize
+
+    // Helper to resolve size constant
+    cellSize = getDashSize(sz)
+
+    // --- Row 0: Header ---
+    table.cell(dash, 0, 0, "  SPY 0DTE DASH  ", text_color=#FFFFFF,
+         bgcolor=C_DASH_HEADER, text_size=cellSize, text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.cell(dash, 2, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.merge_cells(dash, 0, 0, 2, 0)
+
+    // --- Row 1: Price ---
+    color priceClr = close >= open ? C_GREEN : C_RED
+    string dayType = close >= open ? "Green Day" : "Red Day"
+    table.cell(dash, 0, 1, "Price",    text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 1, f2(close),  text_color=priceClr,    text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 1, dayType,    text_color=priceClr,    text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 2: Mode ---
+    string mAdvice = currentMode == "NO TRADE" ? "AVOID" : currentMode == "RANGING" ? "CAUTION" : "ACTIVE"
+    table.cell(dash, 0, 2, "Mode",        text_color=C_DASH_TEXT,  text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 2, currentMode,   text_color=getModeColor(), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 2, mAdvice,       text_color=getModeColor(), text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 3: RSI ---
+    table.cell(dash, 0, 3, "RSI (" + str.tostring(i_rsiLen) + ")",
+         text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 3, f2(rsiValue),  text_color=getRsiColor(), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 3, getRsiLabel(),  text_color=getRsiColor(), text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 4: ADX ---
+    table.cell(dash, 0, 4, "ADX",            text_color=C_DASH_TEXT,  text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 4, f2(adxValue),     text_color=getAdxColor(), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 4, getAdxLabel(),    text_color=getAdxColor(), text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 5: VWAP Distance ---
+    float absVD  = math.abs(vwapDist)
+    color vdClr  = absVD > atrValue ? C_RED : absVD > atrValue * 0.5 ? C_YELLOW : C_GREEN
+    string vdLbl = absVD > atrValue ? "EXTENDED" : "NEAR VWAP"
+    table.cell(dash, 0, 5, "VWAP Dist",   text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 5, f2(vwapDist),  text_color=vdClr,       text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 5, vdLbl,         text_color=vdClr,       text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 6: PM High ---
+    if not na(pmHigh)
+        float pmhD   = close - pmHigh
+        string pmhLbl = close < pmHigh ? "RESISTANCE" : "CLEARED"
+        color pmhClr  = close < pmHigh ? C_RED : C_GREEN
+        table.cell(dash, 0, 6, "PM High",   text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 6, f2(pmhD),    text_color=pmhClr,     text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 6, pmhLbl,      text_color=pmhClr,     text_size=cellSize, text_halign=text.align_right)
+    else
+        table.cell(dash, 0, 6, "PM High", text_color=C_GRAY, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 6, "N/A",     text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 6, "",         text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 7: PM Low ---
+    if not na(pmLow)
+        float pmlD   = close - pmLow
+        string pmlLbl = close > pmLow ? "SUPPORT" : "BROKEN"
+        color pmlClr  = close > pmLow ? C_GREEN : C_RED
+        table.cell(dash, 0, 7, "PM Low",    text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 7, f2(pmlD),    text_color=pmlClr,     text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 7, pmlLbl,      text_color=pmlClr,     text_size=cellSize, text_halign=text.align_right)
+    else
+        table.cell(dash, 0, 7, "PM Low",  text_color=C_GRAY, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 7, "N/A",     text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 7, "",         text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 8: ATR ---
+    table.cell(dash, 0, 8, "ATR (" + str.tostring(i_atrLen) + ")",
+         text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 8, f2(atrValue),  text_color=C_NEUTRAL, text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 8, "",            text_size=cellSize)
+
+    // --- Row 9: EMA Trend ---
+    string emaTrStr = emaBullish ? "BULLISH" : emaBearish ? "BEARISH" : "MIXED"
+    color emaTrClr  = emaBullish ? C_GREEN : emaBearish ? C_RED : C_YELLOW
+    table.cell(dash, 0, 9, "EMA Trend",   text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 9, emaTrStr,      text_color=emaTrClr,    text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 9, "",            text_size=cellSize)
+
+    // --- Row 10: Last Signal ---
+    string sigStr = callsSignal ? "CALLS" : putsSignal ? "PUTS" : "—"
+    color sigClr  = callsSignal ? C_GREEN : putsSignal ? C_RED : C_GRAY
+    table.cell(dash, 0, 10, "Signal",  text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 10, sigStr,    text_color=sigClr,      text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 10, "",        text_size=cellSize)
+
+    // --- Row 11: Day Change % ---
+    float dayChg  = not na(dayOpen) and dayOpen != 0 ? ((close - dayOpen) / dayOpen) * 100 : 0.0
+    string dcStr  = (dayChg >= 0 ? "+" : "") + f2(dayChg) + "%"
+    table.cell(dash, 0, 11, "Day Chg",  text_color=C_DASH_TEXT,         text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 11, dcStr,      text_color=posnegColor(dayChg), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 11, "",         text_size=cellSize)
+
+    // --- Row 12: Relative Volume ---
+    float rVol    = avgVol > 0 ? volume / avgVol : 0.0
+    string rvStr  = f2(rVol) + "x"
+    color rvClr   = rVol > 1.5 ? C_GREEN : rVol > 1.0 ? C_YELLOW : C_GRAY
+    string rvLbl  = rVol > 1.5 ? "SPIKE" : rVol > 1.0 ? "ABOVE AVG" : "BELOW AVG"
+    table.cell(dash, 0, 12, "Rel Vol",  text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 12, rvStr,      text_color=rvClr,       text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 12, rvLbl,      text_color=rvClr,       text_size=cellSize, text_halign=text.align_right)
+
+    // --- Row 13: DI+/DI- Spread ---
+    float diSpread  = diPlus - diMinus
+    string diStr    = "+" + f2(diPlus) + " / -" + f2(diMinus)
+    color diClr     = diSpread > 0 ? C_GREEN : C_RED
+    string diLbl    = diSpread > 0 ? "BULLS" : "BEARS"
+    table.cell(dash, 0, 13, "DI Spread", text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 13, diStr,       text_color=diClr,       text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 13, diLbl,       text_color=diClr,       text_size=cellSize, text_halign=text.align_right)
+
+// ============================================================================
+// ALERTS — STANDARD (alertcondition) + DYNAMIC (alert)
+// ============================================================================
+
+// alertcondition() — appears in TradingView "Create Alert" dropdown
+alertcondition(callsSignal, title="0DTE: CALLS Signal",
+     message="CALLS signal fired on SPY — bullish confluence detected")
+alertcondition(putsSignal,  title="0DTE: PUTS Signal",
+     message="PUTS signal fired on SPY — bearish confluence detected")
+alertcondition(vwapCrossUp, title="0DTE: VWAP Cross Bullish",
+     message="SPY price crossed above VWAP")
+alertcondition(vwapCrossDown, title="0DTE: VWAP Cross Bearish",
+     message="SPY price crossed below VWAP")
+alertcondition(currentMode != currentMode[1], title="0DTE: Regime Mode Change",
+     message="SPY regime mode has changed")
+
+// alert() — dynamic messages with interpolated context
+if callsSignal
+    alert("0DTE CALLS | SPY " + f2(close) +
+         " | RSI " + f2(rsiValue) +
+         " | ADX " + f2(adxValue) +
+         " | VWAP Dist " + f2(vwapDist) +
+         " | Mode: " + currentMode,
+         alert.freq_once_per_bar_close)
+
+if putsSignal
+    alert("0DTE PUTS | SPY " + f2(close) +
+         " | RSI " + f2(rsiValue) +
+         " | ADX " + f2(adxValue) +
+         " | VWAP Dist " + f2(vwapDist) +
+         " | Mode: " + currentMode,
+         alert.freq_once_per_bar_close)
+
+if currentMode != currentMode[1]
+    alert("0DTE MODE SHIFT | " + str.tostring(currentMode[1]) + " -> " + currentMode +
+         " | SPY " + f2(close),
+         alert.freq_once_per_bar)
+
+// ============================================================================
+// END OF SCRIPT
+// ============================================================================
