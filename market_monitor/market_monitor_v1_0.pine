@@ -1,0 +1,401 @@
+// ============================================================================
+// Market Monitor — General Purpose
+// Timeframe: Adaptive (1m through Daily)
+// Version: 1.0.0
+// Author: Chris Thomas
+// ============================================================================
+// Lightweight directional-bias overlay designed for multi-chart monitoring
+// (6-8 charts per window). No signal generation — pure context and bias
+// assessment for quick reads across a watchlist.
+//
+// Core Features:
+//   - Adaptive EMA ribbon with trend cloud
+//   - Session VWAP with standard deviation bands (intraday auto-detect)
+//   - Previous Day High / Low / Close reference levels
+//   - RSI, ADX, ATR momentum/volatility engine
+//   - Relative volume gauge
+//   - Composite directional bias score (-5 to +5)
+//   - Compact 2-column dashboard (optimized for small chart tiles)
+//   - Optional background bias tint
+//   - HTF EMA confirmation layer (pulls from next-higher timeframe)
+// ============================================================================
+
+// ============================================================================
+// TradingView Pine Script v6
+// ============================================================================
+//@version=6
+indicator(
+     title      = "Market Monitor",
+     shorttitle = "MM",
+     overlay    = true,
+     max_labels_count  = 100,
+     max_lines_count   = 200,
+     max_boxes_count   = 50,
+     max_bars_back     = 5000
+ )
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+var string GP_EMA     = "EMA Ribbon"
+var string GP_VWAP    = "VWAP"
+var string GP_LEVELS  = "Key Levels"
+var string GP_BIAS    = "Bias Engine"
+var string GP_DASH    = "Dashboard"
+var string GP_VIS     = "Visuals"
+
+// Colors — dark-theme optimized, high-contrast for small tiles
+var color C_BULL       = #00E676
+var color C_BEAR       = #FF1744
+var color C_NEUTRAL    = #B0BEC5
+var color C_YELLOW     = #FFD600
+var color C_ORANGE     = #FF9100
+var color C_CYAN       = #00BCD4
+var color C_VWAP       = #FFFFFF
+var color C_VWAP_BAND  = color.new(#00BCD4, 60)
+var color C_EMA_FAST   = #FFD600
+var color C_EMA_MID    = #FF9100
+var color C_EMA_SLOW   = #FF1744
+var color C_CLOUD_BULL = color.new(#00E676, 85)
+var color C_CLOUD_BEAR = color.new(#FF1744, 85)
+var color C_PDH        = #FF6E40
+var color C_PDL        = #64FFDA
+var color C_PDC        = #B0BEC5
+var color C_DASH_BG    = color.new(#1A1A2E, 5)
+var color C_DASH_HEAD  = #7C4DFF
+var color C_DASH_TEXT  = #E0E0E0
+var color C_GRAY       = #616161
+var color C_BG_BULL    = color.new(#00E676, 94)
+var color C_BG_BEAR    = color.new(#FF1744, 94)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// --- EMA Ribbon ---
+i_emaFastLen    = input.int(9,    "Fast EMA",              minval=2,  group=GP_EMA)
+i_emaMidLen     = input.int(21,   "Mid EMA",               minval=2,  group=GP_EMA)
+i_emaSlowLen    = input.int(50,   "Slow EMA",              minval=2,  group=GP_EMA)
+i_showEmaCloud  = input.bool(true, "Show EMA Cloud Fill",  group=GP_EMA)
+i_showEmas      = input.bool(true, "Show EMA Lines",       group=GP_EMA)
+
+// --- VWAP ---
+i_showVwap      = input.bool(true,  "Show VWAP",                group=GP_VWAP)
+i_showVwapBands = input.bool(true,  "Show VWAP +/- 1 StdDev",  group=GP_VWAP)
+i_vwapBandMult  = input.float(1.0,  "VWAP Band Multiplier",    minval=0.5, maxval=3.0, step=0.25, group=GP_VWAP)
+
+// --- Key Levels ---
+i_showPDLevels  = input.bool(true, "Show Prev Day H/L/C",  group=GP_LEVELS)
+i_showPDLabels  = input.bool(false, "Show Level Labels",    group=GP_LEVELS,
+     tooltip="Labels on level lines. Disable for cleaner small tiles.")
+
+// --- Bias Engine ---
+i_rsiLen        = input.int(14,   "RSI Length",            minval=2,  group=GP_BIAS)
+i_adxLen        = input.int(14,   "ADX Length",            minval=2,  group=GP_BIAS)
+i_atrLen        = input.int(14,   "ATR Length",            minval=2,  group=GP_BIAS)
+i_volAvgLen     = input.int(20,   "Volume SMA Length",     minval=5,  group=GP_BIAS)
+i_htfConfirm    = input.bool(true, "HTF EMA Confirmation", group=GP_BIAS,
+     tooltip="Pulls the slow EMA from the next-higher timeframe for trend confirmation.")
+
+// --- Dashboard ---
+i_showDash      = input.bool(true,  "Show Dashboard",       group=GP_DASH)
+i_dashSize      = input.string("Normal", "Dashboard Size",   options=["Tiny", "Small", "Normal", "Large", "Huge"], group=GP_DASH)
+i_dashPos       = input.string("Bottom Right", "Position",     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GP_DASH)
+
+// --- Visuals ---
+i_showBgTint    = input.bool(true,  "Background Bias Tint",  group=GP_VIS,
+     tooltip="Subtle background color indicating directional bias.")
+i_bgThreshold   = input.int(2, "Bias Threshold for Tint",   minval=1, maxval=5, group=GP_VIS,
+     tooltip="Minimum absolute bias score to trigger background tint.")
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+f2(float val) =>
+    str.tostring(val, "#.##")
+
+f1(float val) =>
+    str.tostring(val, "#.#")
+
+posnegColor(float val) =>
+    val > 0 ? C_BULL : val < 0 ? C_BEAR : C_NEUTRAL
+
+biasColor(int score) =>
+    score >= 3 ? C_BULL : score >= 1 ? color.new(C_BULL, 40) : score <= -3 ? C_BEAR : score <= -1 ? color.new(C_BEAR, 40) : C_NEUTRAL
+
+// Determine if current timeframe is intraday
+isIntraday() =>
+    timeframe.isintraday
+
+// Map current TF to next-higher TF for HTF confirmation
+getHTF() =>
+    switch
+        timeframe.period == "1"   => "5"
+        timeframe.period == "3"   => "15"
+        timeframe.period == "5"   => "15"
+        timeframe.period == "10"  => "30"
+        timeframe.period == "15"  => "60"
+        timeframe.period == "30"  => "60"
+        timeframe.period == "60"  => "240"
+        timeframe.period == "120" => "240"
+        timeframe.period == "240" => "D"
+        timeframe.period == "D"   => "W"
+        timeframe.period == "W"   => "M"
+        => "D"
+
+// ============================================================================
+// EMA RIBBON
+// ============================================================================
+emaFast = ta.ema(close, i_emaFastLen)
+emaMid  = ta.ema(close, i_emaMidLen)
+emaSlow = ta.ema(close, i_emaSlowLen)
+
+bool emaBullish = emaFast > emaMid and emaMid > emaSlow
+bool emaBearish = emaFast < emaMid and emaMid < emaSlow
+
+plot(i_showEmas ? emaFast : na, "EMA Fast", C_EMA_FAST, 1)
+plot(i_showEmas ? emaMid  : na, "EMA Mid",  C_EMA_MID,  1)
+pSlow = plot(i_showEmas ? emaSlow : na, "EMA Slow", C_EMA_SLOW, 2)
+pFast = plot(i_showEmas ? emaFast : na, "EMA Fast Fill", color.new(chart.bg_color, 100), display=display.none)
+
+color cloudColor = emaBullish ? C_CLOUD_BULL : emaBearish ? C_CLOUD_BEAR : color.new(C_YELLOW, 92)
+fill(pFast, pSlow, i_showEmaCloud ? cloudColor : na, title="EMA Cloud")
+
+// ============================================================================
+// VWAP + BANDS (intraday only)
+// ============================================================================
+// VWAP is only meaningful on intraday charts — auto-disable on D/W/M
+bool intradayChart = isIntraday()
+
+// Compute VWAP components manually for band calculation
+var float cumTPV    = 0.0
+var float cumVol    = 0.0
+var float cumTPV2   = 0.0
+
+if intradayChart
+    if ta.change(time("D")) != 0
+        cumTPV  := 0.0
+        cumVol  := 0.0
+        cumTPV2 := 0.0
+    float tp   = hlc3
+    cumTPV    += tp * volume
+    cumVol    += volume
+    cumTPV2   += tp * tp * volume
+
+float vwapVal  = intradayChart and cumVol > 0 ? cumTPV / cumVol : na
+float vwapVar  = intradayChart and cumVol > 0 ? (cumTPV2 / cumVol) - (vwapVal * vwapVal) : na
+float vwapStd  = intradayChart and not na(vwapVar) and vwapVar > 0 ? math.sqrt(vwapVar) : na
+float vwapUp   = not na(vwapVal) and not na(vwapStd) ? vwapVal + vwapStd * i_vwapBandMult : na
+float vwapDn   = not na(vwapVal) and not na(vwapStd) ? vwapVal - vwapStd * i_vwapBandMult : na
+
+plot(i_showVwap and intradayChart ? vwapVal : na, "VWAP", C_VWAP, 2, plot.style_line)
+plot(i_showVwapBands and intradayChart ? vwapUp : na, "VWAP Upper", C_VWAP_BAND, 1, plot.style_line)
+plot(i_showVwapBands and intradayChart ? vwapDn : na, "VWAP Lower", C_VWAP_BAND, 1, plot.style_line)
+
+// VWAP distance (in price terms)
+float vwapDist = not na(vwapVal) ? close - vwapVal : na
+
+// ============================================================================
+// PREVIOUS DAY HIGH / LOW / CLOSE
+// ============================================================================
+// Use security to pull prior day data — works on all timeframes
+[pdHigh, pdLow, pdClose] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+
+plot(i_showPDLevels ? pdHigh  : na, "Prev Day High",  C_PDH, 1, plot.style_line)
+plot(i_showPDLevels ? pdLow   : na, "Prev Day Low",   C_PDL, 1, plot.style_line)
+plot(i_showPDLevels ? pdClose : na, "Prev Day Close",  C_PDC, 1, plot.style_stepline)
+
+// ============================================================================
+// RSI / ADX / ATR ENGINE
+// ============================================================================
+
+// --- RSI ---
+float rsiVal = ta.rsi(close, i_rsiLen)
+
+// --- ADX via DI+/DI- ---
+[diPlus, diMinus, adxVal] = ta.dmi(i_adxLen, i_adxLen)
+
+// --- ATR ---
+float atrVal = ta.atr(i_atrLen)
+
+// --- Relative Volume ---
+float avgVol = ta.sma(volume, i_volAvgLen)
+float relVol = avgVol > 0 ? volume / avgVol : 0.0
+
+// ============================================================================
+// HTF EMA CONFIRMATION
+// ============================================================================
+string htfTF       = getHTF()
+float htfEmaSlow   = request.security(syminfo.tickerid, htfTF, ta.ema(close, i_emaSlowLen), lookahead=barmerge.lookahead_off)
+bool htfBullish    = i_htfConfirm ? close > htfEmaSlow : true
+bool htfBearish    = i_htfConfirm ? close < htfEmaSlow : true
+
+// ============================================================================
+// COMPOSITE DIRECTIONAL BIAS SCORE
+// ============================================================================
+// Range: -5 to +5.  Each condition contributes +1 (bullish) or -1 (bearish).
+// Conditions:
+//   1. EMA alignment (fast > mid > slow = bull, inverse = bear)
+//   2. Price vs VWAP (intraday) or price vs slow EMA (daily+)
+//   3. RSI bias (>55 = bull, <45 = bear)
+//   4. DI+ vs DI- directional dominance
+//   5. HTF EMA confirmation (price vs higher-TF slow EMA)
+
+int bias = 0
+
+// 1. EMA alignment
+bias += emaBullish ? 1 : emaBearish ? -1 : 0
+
+// 2. Price vs anchor
+if intradayChart and not na(vwapVal)
+    bias += close > vwapVal ? 1 : close < vwapVal ? -1 : 0
+else
+    bias += close > emaSlow ? 1 : close < emaSlow ? -1 : 0
+
+// 3. RSI bias
+bias += rsiVal > 55 ? 1 : rsiVal < 45 ? -1 : 0
+
+// 4. DI spread
+bias += diPlus > diMinus ? 1 : diPlus < diMinus ? -1 : 0
+
+// 5. HTF confirmation
+if i_htfConfirm
+    bias += htfBullish and not htfBearish ? 1 : htfBearish and not htfBullish ? -1 : 0
+
+// ============================================================================
+// BACKGROUND TINT
+// ============================================================================
+color bgColor = na
+if i_showBgTint
+    if bias >= i_bgThreshold
+        bgColor := C_BG_BULL
+    else if bias <= -i_bgThreshold
+        bgColor := C_BG_BEAR
+bgcolor(bgColor, title="Bias Background")
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+if i_showDash and barstate.islast
+    // --- Position mapping ---
+    string tblYPos = str.contains(i_dashPos, "Top") ? position.top_right : position.bottom_right
+    if str.contains(i_dashPos, "Left")
+        tblYPos := str.contains(i_dashPos, "Top") ? position.top_left : position.bottom_left
+
+    string cellSize = switch i_dashSize
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.small
+
+    var table dash = table.new(tblYPos, 3, 12, bgcolor=C_DASH_BG, border_width=0)
+
+    // === Row 0: Header ===
+    table.cell(dash, 0, 0, syminfo.ticker, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 0, timeframe.period, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_right)
+    string htfLabel = i_htfConfirm ? "HTF:" + htfTF : ""
+    table.cell(dash, 2, 0, htfLabel, text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 1: Bias Score ===
+    string biasStr  = (bias > 0 ? "+" : "") + str.tostring(bias)
+    string biasLbl  = bias >= 3 ? "STRONG BULL" : bias >= 1 ? "LEAN BULL" : bias <= -3 ? "STRONG BEAR" : bias <= -1 ? "LEAN BEAR" : "NEUTRAL"
+    table.cell(dash, 0, 1, "Bias",     text_color=C_DASH_TEXT,  text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 1, biasStr,    text_color=biasColor(bias), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 1, biasLbl,    text_color=biasColor(bias), text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 2: Price / Day Change ===
+    float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+    float dayChg  = not na(dayOpen) and dayOpen != 0 ? ((close - dayOpen) / dayOpen) * 100.0 : 0.0
+    string dcStr  = (dayChg >= 0 ? "+" : "") + f2(dayChg) + "%"
+    table.cell(dash, 0, 2, "Price",  text_color=C_DASH_TEXT,        text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 2, f2(close), text_color=posnegColor(dayChg), text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 2, dcStr,    text_color=posnegColor(dayChg), text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 3: EMA Trend ===
+    string emaStr = emaBullish ? "BULLISH" : emaBearish ? "BEARISH" : "MIXED"
+    color emaClr  = emaBullish ? C_BULL : emaBearish ? C_BEAR : C_YELLOW
+    table.cell(dash, 0, 3, "EMA",     text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 3, emaStr,    text_color=emaClr,      text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 3, str.tostring(i_emaFastLen) + "/" + str.tostring(i_emaMidLen) + "/" + str.tostring(i_emaSlowLen),
+         text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 4: RSI ===
+    string rsiLbl = rsiVal > 70 ? "OVERBOUGHT" : rsiVal > 55 ? "BULLISH" : rsiVal < 30 ? "OVERSOLD" : rsiVal < 45 ? "BEARISH" : "NEUTRAL"
+    color rsiClr  = rsiVal > 70 ? C_ORANGE : rsiVal > 55 ? C_BULL : rsiVal < 30 ? C_ORANGE : rsiVal < 45 ? C_BEAR : C_NEUTRAL
+    table.cell(dash, 0, 4, "RSI",    text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 4, f1(rsiVal), text_color=rsiClr,    text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 4, rsiLbl,   text_color=rsiClr,      text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 5: ADX (Trend Strength) ===
+    string adxLbl = adxVal > 40 ? "STRONG" : adxVal > 25 ? "TRENDING" : adxVal > 20 ? "WEAK" : "NO TREND"
+    color adxClr  = adxVal > 40 ? C_BULL : adxVal > 25 ? C_CYAN : adxVal > 20 ? C_YELLOW : C_GRAY
+    table.cell(dash, 0, 5, "ADX",    text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 5, f1(adxVal), text_color=adxClr,    text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 5, adxLbl,   text_color=adxClr,      text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 6: DI Spread ===
+    float diSpread = diPlus - diMinus
+    string diStr   = "+" + f1(diPlus) + " / -" + f1(diMinus)
+    color diClr    = diSpread > 0 ? C_BULL : C_BEAR
+    string diLbl   = diSpread > 5 ? "BULLS" : diSpread < -5 ? "BEARS" : "FLAT"
+    table.cell(dash, 0, 6, "DI",     text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 6, diStr,    text_color=diClr,       text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 6, diLbl,    text_color=diClr,       text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 7: ATR ===
+    float atrPct = close > 0 ? (atrVal / close) * 100.0 : 0.0
+    table.cell(dash, 0, 7, "ATR",    text_color=C_DASH_TEXT,  text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 7, f2(atrVal), text_color=C_NEUTRAL,  text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 7, f1(atrPct) + "%", text_color=C_NEUTRAL, text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 8: VWAP Distance (intraday) or Price vs Slow EMA (daily+) ===
+    if intradayChart and not na(vwapDist)
+        float absVD  = math.abs(vwapDist)
+        color vdClr  = absVD > atrVal ? C_ORANGE : absVD > atrVal * 0.5 ? C_YELLOW : C_BULL
+        string vdLbl = absVD > atrVal ? "EXTENDED" : "NEAR"
+        table.cell(dash, 0, 8, "VWAP",  text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 8, f2(vwapDist), text_color=vdClr,  text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 8, vdLbl,   text_color=vdClr,       text_size=cellSize, text_halign=text.align_right)
+    else
+        float emaDist = close - emaSlow
+        color edClr   = emaDist > 0 ? C_BULL : C_BEAR
+        table.cell(dash, 0, 8, "EMA Dist", text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 8, f2(emaDist), text_color=edClr,     text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 8, "",        text_size=cellSize)
+
+    // === Row 9: Relative Volume ===
+    string rvStr = f1(relVol) + "x"
+    color rvClr  = relVol > 2.0 ? C_BULL : relVol > 1.2 ? C_YELLOW : C_GRAY
+    string rvLbl = relVol > 2.0 ? "SPIKE" : relVol > 1.2 ? "ABOVE" : "BELOW"
+    table.cell(dash, 0, 9, "RelVol", text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+    table.cell(dash, 1, 9, rvStr,    text_color=rvClr,       text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 2, 9, rvLbl,    text_color=rvClr,       text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 10: HTF Confirmation ===
+    if i_htfConfirm
+        string htfStr = htfBullish and not htfBearish ? "ABOVE" : htfBearish and not htfBullish ? "BELOW" : "AT"
+        color htfClr  = htfBullish and not htfBearish ? C_BULL : htfBearish and not htfBullish ? C_BEAR : C_NEUTRAL
+        table.cell(dash, 0, 10, "HTF",  text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 10, htfStr, text_color=htfClr,      text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 10, "EMA" + str.tostring(i_emaSlowLen), text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+
+    // === Row 11: Prev Day Context ===
+    if not na(pdHigh) and not na(pdLow)
+        string pdPos = close > pdHigh ? "ABOVE PDH" : close < pdLow ? "BELOW PDL" : "IN RANGE"
+        color pdClr  = close > pdHigh ? C_BULL : close < pdLow ? C_BEAR : C_YELLOW
+        table.cell(dash, 0, 11, "PD",   text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)
+        table.cell(dash, 1, 11, pdPos,  text_color=pdClr,       text_size=cellSize, text_halign=text.align_right)
+        table.cell(dash, 2, 11, "",     text_size=cellSize)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition(bias >= 3,            "Strong Bullish Bias",     "{{ticker}} bias score >= +3 on {{interval}}")
+alertcondition(bias <= -3,           "Strong Bearish Bias",     "{{ticker}} bias score <= -3 on {{interval}}")
+alertcondition(ta.cross(bias, 0),    "Bias Crossed Neutral",    "{{ticker}} bias crossed zero on {{interval}}")
+alertcondition(relVol > 2.0,         "Volume Spike (>2x)",      "{{ticker}} relative volume > 2x on {{interval}}")
+alertcondition(rsiVal > 70,          "RSI Overbought",          "{{ticker}} RSI > 70 on {{interval}}")
+alertcondition(rsiVal < 30,          "RSI Oversold",            "{{ticker}} RSI < 30 on {{interval}}")
+// ============================================================================
+// END
+// ============================================================================
