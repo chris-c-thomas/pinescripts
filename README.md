@@ -1,4 +1,4 @@
-# TradingView Pine Script Indicator Suite
+# CHRD TradingView Pine Script Indicator Suite
 
 A collection of Pine Script v6 indicators for TradingView, organized into purpose-built families that span the full analytical workflow — from strategic trend assessment down to intraday execution signals.
 
