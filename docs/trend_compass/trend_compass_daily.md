@@ -362,7 +362,7 @@ The dashboard shows **position in 52-week range** as a percentage:
 
 | Row | Field | Content |
 |-----|-------|---------|
-| 0 | Header | Ticker, timeframe, "TREND COMPASS" |
+| 0 | Header | "Trend Compass - Daily" (merged, purple accent bar) |
 | 1 | Phase | EMERGING / ACCELERATING / MATURE / EXHAUSTING / CONSOLIDATING / REVERSING |
 | 2 | Score | Composite score with label (STRONG BULL, LEAN BEAR, etc.) |
 | 3 | Momentum | IMPROVING / STABLE / FADING (score trend) |

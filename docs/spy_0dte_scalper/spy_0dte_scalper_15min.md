@@ -567,7 +567,7 @@ Optional (off by default) subtle background tint when regime is BULLISH or BEARI
 
 ### Dashboard Fields
 
-All dashboard fields update on the last bar only (`barstate.islast`) for performance. The header row displays the scoring mode (`[W]` for weighted, `[EQ]` for equal).
+All dashboard fields update on the last bar only (`barstate.islast`) for performance. The header row displays "SPY 0DTE Scalper - 15m" with a purple accent bar.
 
 ---
 

@@ -90,7 +90,7 @@ Compact 3-column, 12-row table optimized for small chart tiles:
 
 | Row | Field | Col 1 | Col 2 |
 |-----|-------|-------|-------|
-| 0 | Header | Ticker | Timeframe |
+| 0 | Header | "Market Monitor - 1m" (merged) | — |
 | 1 | Bias | Score (+/-) | Label |
 | 2 | Price | Current | Day Change % |
 | 3 | EMA | Trend State | Lengths |
@@ -103,7 +103,7 @@ Compact 3-column, 12-row table optimized for small chart tiles:
 | 10 | HTF | Above/Below | EMA Length |
 | 11 | Prev Day | Position | — |
 
-Three size options (Tiny / Small / Normal) and four corner positions. For 6-8 chart layouts, **Tiny** or **Small** with **Top Right** positioning works best.
+Four size options (Tiny / Small / Normal / Large) and four corner positions. Default: **Normal** size, **Bottom Right** positioning.
 
 ---
 

@@ -353,7 +353,7 @@ Three-column table with a header row and 15 data rows (16 total). Dark navy back
 
 | Row | Field | Value | Color Logic |
 |-----|-------|-------|-------------|
-| Header | SPY 0DTE Scalper Dashboard | — | Magenta accent bar |
+| Header | SPY 0DTE Scalper - 1m | — | Purple accent bar |
 | 1 | Price | Current close + bar direction | Green = green bar, Red = red bar |
 | 2 | Mode | Regime classification + advice | Green/Red/Yellow/Orange/Gray per mode |
 | 3 | RSI (14) | RSI value + status | Red = overbought, Green = oversold, White = neutral |

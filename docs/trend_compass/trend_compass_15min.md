@@ -152,7 +152,7 @@ Weighted architecture identical to higher timeframe variants.
 
 | Row | Field | Content |
 |-----|-------|---------|
-| 0 | Header | Ticker, timeframe, "TREND COMPASS" |
+| 0 | Header | "Trend Compass - 15m" (merged, purple accent bar) |
 | 1 | Phase | EMERGING / ACCELERATING / MATURE / EXHAUSTING / CONSOLIDATING / REVERSING |
 | 2 | Score | Composite score with label |
 | 3 | Momentum | IMPROVING / STABLE / FADING |

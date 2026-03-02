@@ -83,9 +83,9 @@ var color C_PURPLE     = #7C4DFF
 var color C_WHITE      = #FFFFFF
 var color C_GRAY       = #78909C
 var color C_DARK_GRAY  = #455A64
-var color C_DASH_BG    = #1E1E1E
-var color C_DASH_TEXT  = #B0BEC5
-var color C_DASH_HEAD  = #FFFFFF
+var color C_DASH_BG    = color.new(#1A1A2E, 5)
+var color C_DASH_TEXT  = #E0E0E0
+var color C_DASH_HEADER = #7C4DFF
 var color C_CLOUD_BULL = color.new(#00E676, 85)
 var color C_CLOUD_BEAR = color.new(#FF1744, 85)
 var color C_CLOUD_MIX  = color.new(#FFD600, 90)
@@ -721,12 +721,19 @@ if i_showDash and barstate.islast
         => size.small
 
     // 3 columns, 19 rows
-    var table dash = table.new(tblPos, 3, 19, bgcolor=C_DASH_BG, border_width=0)
+    var table dash = table.new(tblPos, 3, 19,
+         bgcolor      = C_DASH_BG,
+         border_width = 0,
+         border_color = color.new(#FFFFFF, 85),
+         frame_width  = 1,
+         frame_color  = color.new(#FFFFFF, 80))
 
     // === Row 0: Header ===
-    table.cell(dash, 0, 0, syminfo.ticker, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_left)
-    table.cell(dash, 1, 0, timeframe.period, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_right)
-    table.cell(dash, 2, 0, "TREND COMPASS", text_color=C_PURPLE, text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 0, 0, "  Trend Compass - 1h  ", text_color=#FFFFFF,
+         bgcolor=C_DASH_HEADER, text_size=cellSize, text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.cell(dash, 2, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.merge_cells(dash, 0, 0, 2, 0)
 
     // === Row 1: Trend Phase ===
     table.cell(dash, 0, 1, "Phase",      text_color=C_DASH_TEXT, text_size=cellSize, text_halign=text.align_left)

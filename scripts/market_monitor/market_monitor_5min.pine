@@ -75,7 +75,7 @@ var color C_OR_LOW     = color.new(#FFD600, 40)
 var color C_HOD        = color.new(#00E676, 50)
 var color C_LOD        = color.new(#FF1744, 50)
 var color C_DASH_BG    = color.new(#1A1A2E, 5)
-var color C_DASH_HEAD  = #7C4DFF
+var color C_DASH_HEADER = #7C4DFF
 var color C_DASH_TEXT  = #E0E0E0
 var color C_GRAY       = #616161
 var color C_BG_BULL    = color.new(#00E676, 94)
@@ -544,12 +544,19 @@ if i_showDash and barstate.islast
         => size.small
 
     // 3 columns, 18 rows
-    var table dash = table.new(tblYPos, 3, 18, bgcolor=C_DASH_BG, border_width=0)
+    var table dash = table.new(tblYPos, 3, 18,
+         bgcolor      = C_DASH_BG,
+         border_width = 0,
+         border_color = color.new(#FFFFFF, 85),
+         frame_width  = 1,
+         frame_color  = color.new(#FFFFFF, 80))
 
     // === Row 0: Header ===
-    table.cell(dash, 0, 0, syminfo.ticker, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_left)
-    table.cell(dash, 1, 0, timeframe.period + "m", text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_right)
-    table.cell(dash, 2, 0, sessionPhase, text_color=phaseColor, text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 0, 0, "  Market Monitor - 5m  ", text_color=#FFFFFF,
+         bgcolor=C_DASH_HEADER, text_size=cellSize, text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.cell(dash, 2, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.merge_cells(dash, 0, 0, 2, 0)
 
     // === Row 1: Bias Score ===
     string biasStr  = (bias > 0 ? "+" : "") + str.tostring(bias) + "/" + str.tostring(maxScore)

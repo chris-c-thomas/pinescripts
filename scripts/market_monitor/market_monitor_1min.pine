@@ -61,7 +61,7 @@ var color C_PDH        = #FF6E40
 var color C_PDL        = #64FFDA
 var color C_PDC        = #B0BEC5
 var color C_DASH_BG    = color.new(#1A1A2E, 5)
-var color C_DASH_HEAD  = #7C4DFF
+var color C_DASH_HEADER = #7C4DFF
 var color C_DASH_TEXT  = #E0E0E0
 var color C_GRAY       = #616161
 var color C_BG_BULL    = color.new(#00E676, 94)
@@ -98,7 +98,7 @@ i_htfConfirm    = input.bool(true, "HTF EMA Confirmation", group=GP_BIAS,
 
 // --- Dashboard ---
 i_showDash      = input.bool(true,  "Show Dashboard",       group=GP_DASH)
-i_dashSize      = input.string("Normal", "Dashboard Size",   options=["Tiny", "Small", "Normal", "Large", "Huge"], group=GP_DASH)
+i_dashSize      = input.string("Small", "Dashboard Size",    options=["Tiny", "Small", "Normal", "Large", "Huge"], group=GP_DASH)
 i_dashPos       = input.string("Bottom Right", "Position",     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GP_DASH)
 
 // --- Visuals ---
@@ -287,13 +287,19 @@ if i_showDash and barstate.islast
         "Normal" => size.normal
         => size.small
 
-    var table dash = table.new(tblYPos, 3, 12, bgcolor=C_DASH_BG, border_width=0)
+    var table dash = table.new(tblYPos, 3, 12,
+         bgcolor      = C_DASH_BG,
+         border_width = 0,
+         border_color = color.new(#FFFFFF, 85),
+         frame_width  = 1,
+         frame_color  = color.new(#FFFFFF, 80))
 
     // === Row 0: Header ===
-    table.cell(dash, 0, 0, syminfo.ticker, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_left)
-    table.cell(dash, 1, 0, timeframe.period, text_color=C_DASH_HEAD, text_size=cellSize, text_halign=text.align_right)
-    string htfLabel = i_htfConfirm ? "HTF:" + htfTF : ""
-    table.cell(dash, 2, 0, htfLabel, text_color=C_GRAY, text_size=cellSize, text_halign=text.align_right)
+    table.cell(dash, 0, 0, "  Market Monitor - 1m  ", text_color=#FFFFFF,
+         bgcolor=C_DASH_HEADER, text_size=cellSize, text_halign=text.align_center)
+    table.cell(dash, 1, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.cell(dash, 2, 0, "", bgcolor=C_DASH_HEADER, text_size=cellSize)
+    table.merge_cells(dash, 0, 0, 2, 0)
 
     // === Row 1: Bias Score ===
     string biasStr  = (bias > 0 ? "+" : "") + str.tostring(bias)

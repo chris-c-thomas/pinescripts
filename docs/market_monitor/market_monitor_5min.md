@@ -176,7 +176,7 @@ Compact 3-column, 18-row table optimized for small chart tiles:
 
 | Row | Field | Col 1 | Col 2 | Col 3 |
 |-----|-------|-------|-------|-------|
-| 0 | Header | Ticker | Timeframe | Session Phase |
+| 0 | Header | "Market Monitor - 5m" (merged) | — | — |
 | 1 | Bias | Label | Score / Max | Bias Label |
 | 2 | Trend | Label | IMPROVING/STABLE/FADING | WTD/EQL |
 | 3 | Price | Label | Current Price | Day Change % |
@@ -195,7 +195,7 @@ Compact 3-column, 18-row table optimized for small chart tiles:
 | 16 | Session | Label | HOD/LOD Position | H/L Values |
 | 17 | PD VWAP | Label | Value | Above/Below |
 
-For 6-8 chart layouts, **Small** or **Tiny** size with **Bottom Right** positioning works best.
+Default: **Normal** size, **Bottom Right** positioning.
 
 ---
 
