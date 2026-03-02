@@ -4,11 +4,42 @@ All notable changes to this project are documented in this file.
 
 ---
 
-## (2026-02-27) -- Repository maintenance
+## (2026-03-02) -- Trend Compass 1H
 
-- Removed v1.0 versions of all SPY 0DTE Scalper scripts (1-minute, 5-minute, 15-minute). v1.1 is now the canonical and only version for each timeframe.
-- Renamed all script and documentation files to remove version suffixes from filenames. Version information is now tracked within file headers and document titles only.
-- Updated README.md: consolidated scalper indicator table to current versions, corrected all file and doc links, moved the Timeframe Comparison table inside the SPY 0DTE Scalper section, and folded TTM Squeeze and NYSE TICK into Core Components as standard features.
+- New 1-Hour variant of the Trend Compass family, bridging the gap between intraday Market Monitors and the 4-Hour Trend Compass.
+- Fastest feedback loop in the Trend Compass family: catches intraday trend shifts and divergences that the 4H is too slow to detect.
+- Intended use: same-day trend assessment before deploying scalping tools, intraday divergence monitoring, and 4H 50 EMA support/resistance evaluation.
+
+**Architecture**:
+
+- EMA Ribbon (10/21/50) computed on 1H bars with 0.2% compression threshold (tighter than 4H's 0.3%).
+- Four HTF EMA layers: 4H 50 EMA (new bridge level unique to 1H variant), Daily 50 EMA, Daily 200 EMA (anchor), Weekly 50 EMA — all individually toggleable.
+- Composite Weighted Trend Score (-11 to +11) from 8 conditions: 3 structural (2x weight) + 5 confirmation (1x). Same scoring architecture as Daily and 4H variants.
+- Trend Phase Classifier: EMERGING / ACCELERATING / MATURE / EXHAUSTING / CONSOLIDATING / REVERSING.
+- RSI/MACD divergence detection with 3L/2R pivots (fastest in family), 30-bar decay (~4.6 trading days).
+- ATR/BB width percentile ranking over 300-bar lookback (~46 trading days).
+- 52-week high/low via Daily `request.security()`.
+
+**1H-specific calibration**:
+
+- EMA slope threshold: 0.003 (vs 0.005 on 4H, 0.01 on Daily) for smaller per-bar moves.
+- Cross detection windows: fast/mid 5 bars, mid/slow 8 bars (wider in bar count, equivalent calendar time).
+- Divergence pivots: 3L/2R (vs 4L/2R on 4H, 5L/3R on Daily) with ~2-hour confirmation delay.
+- Percentile lookbacks: 300 bars (vs 200 on 4H, 100 on Daily) to maintain ~46 days of context.
+- Fibonacci lookback: 150 bars (~23 trading days) vs 100 on 4H, 50 on Daily.
+- 4H 50 EMA as unique structural reference: fills gap between local 1H 50 EMA (~7.7 days) and Daily 50 EMA (~50 days). Plotted as green step line.
+
+**Dashboard and alerts**:
+
+- 19-row dashboard (largest in family): adds combined D50/4H50 alignment row and 4H 50 EMA display.
+- 12 alert conditions (same set as Daily and 4H): phase change, strong bull/bear, neutral cross, RSI/MACD divergences (4), golden/death cross, ATR regime change, BB extreme compression.
+- 7 `request.security` calls (most in family): 4H 50 EMA, D50 EMA, D200 EMA, W50 EMA, prior day H/L/C, prior week H/L/C, 52w H/L.
+
+**Key levels**:
+
+- Prior Day H/L/C + Prior Week H/L/C reference levels.
+- Fibonacci retracement (optional, default OFF): 150-bar lookback.
+- Ichimoku Cloud (optional, default OFF): standard 9/26/52/26.
 
 ---
 
@@ -19,6 +50,7 @@ All notable changes to this project are documented in this file.
 - No signal generation — pure trend context, strength assessment, and structural positioning.
 
 **Daily variant (TC-D)**:
+
 - EMA Ribbon (10/21/50) with dynamic cloud fill and 200 EMA anchor (local).
 - Weekly 50 EMA via `request.security()` for macro trend context.
 - Trend Phase Classifier: EMERGING / ACCELERATING / MATURE / EXHAUSTING / CONSOLIDATING / REVERSING based on ADX value, ADX slope, EMA spread, and crossover detection.
@@ -41,6 +73,7 @@ All notable changes to this project are documented in this file.
 - 3 `request.security` calls (Weekly EMA, prior week H/L/C, prior month H/L/C).
 
 **4-Hour variant (TC-4H)**:
+
 - Same architecture as Daily with recalibrated parameters for 4-hour bars.
 - Anchor EMA = Daily 200 EMA via `request.security()` (not local — 200 bars on 4H = 33 days, insufficient for institutional weight).
 - Three HTF EMA layers: Daily 50 EMA, Daily 200 EMA, Weekly 50 EMA — all individually toggleable.
