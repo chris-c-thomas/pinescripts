@@ -1,4 +1,4 @@
-# Trend Compass 1H v1.0.0
+# Trend Compass 1H
 
 1-hour optimized strategic trend assessment overlay for equities, ETFs, and indices.
 
@@ -84,6 +84,7 @@ The 1H chart produces ~6.5 bars per RTH session (~10+ with extended hours), maki
 **Workflow**: Trend Compass Daily sets the macro bias. Trend Compass 4H provides multi-day swing context. **Trend Compass 1H provides intraday swing context** — is today's price action strengthening or weakening the multi-day trend? Market Monitors scan for short-timeframe alignment. 0DTE Scalpers execute.
 
 The 1H variant is particularly valuable for:
+
 - **Same-day trend assessment** before deploying scalping tools.
 - **Intraday divergence detection** that the 4H variant is too slow to catch.
 - **4H 50 EMA monitoring** as a key support/resistance level for swing entries.
@@ -354,35 +355,3 @@ Default 0.003. Controls whether the 50 EMA slope is classified as positive or ne
 - **Divergence detection lag**: 2-bar right pivot = ~2 hours of confirmation delay. Fastest in the family but not instantaneous.
 - **Higher divergence frequency**: 3L/2R on 1H produces more signals than other variants. Use trend phase and composite score for filtering.
 - **Percentile loop computation**: 300-bar lookback is the largest in the family. Computationally trivial but marginally more than the 4H variant's 200-bar loops.
-
----
-
-## Changelog
-
-### v1.0.0 (2026-03-02)
-
-Initial release.
-
-- EMA Ribbon (10/21/50) on 1H bars with dynamic cloud fill and 0.2% compression threshold.
-- 4H 50 EMA as immediate HTF structural bridge via `request.security()`.
-- Daily 200 EMA as institutional anchor via `request.security()`.
-- Daily 50 EMA as intermediate structural reference via `request.security()`.
-- Weekly 50 EMA as macro trend context via `request.security()`.
-- Trend Phase Classifier with 1H-tuned crossover windows (5/8 bars).
-- Composite Weighted Trend Score (-11 to +11) with 8 conditions.
-- Score trend tracking (IMPROVING / STABLE / FADING) via 5-bar SMA.
-- ADX with slope analysis (RISING / FLAT / FALLING).
-- 50 EMA slope with 0.003 threshold and slope acceleration.
-- RSI divergence detection with 3L/2R pivots and 30-bar decay.
-- MACD divergence detection with 3L/2R pivots and 30-bar decay.
-- OBV trend confirmation (CONFIRMING / DIVERGING / NEUTRAL).
-- Relative Volume (20-bar SMA baseline).
-- ATR percentile ranking with 300-bar default lookback.
-- BB Width percentile with 300-bar default lookback.
-- 52-week high/low via Daily `request.security()` for accuracy.
-- Prior Day H/L/C reference levels.
-- Prior Week H/L/C reference levels.
-- Fibonacci retracement (optional, default OFF) with 150-bar lookback.
-- Ichimoku Cloud (optional, default OFF) with standard 9/26/52/26 parameters.
-- 19-row dashboard with configurable position and size.
-- 12 alert conditions including Daily golden/death cross detection.

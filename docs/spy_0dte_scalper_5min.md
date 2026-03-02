@@ -1,4 +1,4 @@
-# 0DTE SPY Scalping Indicator (5-Minute) v1.1
+# 0DTE SPY Scalper - 5m
 
 **Platform**: TradingView
 **Language**: Pine Script v6
@@ -763,35 +763,3 @@ Min Score:             3
 9. **TICK data availability**: the NYSE TICK symbol (`USI:TICK`) requires your TradingView data plan to include the relevant exchange. If unavailable, the TICK row shows "N/A" and the TICK scoring condition does not contribute to the score (it will never award a point, but will not block signals). TICK data is only available during RTH (9:30 AM - 4:00 PM ET).
 
 10. **Squeeze recency window is hardcoded**: the 3-bar recency window for squeeze scoring (condition #8) is defined in the source code, not as a configurable input. Modifying the window requires editing the Pine Script source (`sqzBarsSinceFire <= 3`).
-
----
-
-## Changelog
-
-### v1.1 (2025-02-20)
-
-- **TTM Squeeze detection**: Bollinger Bands (20, 2.0) vs Keltner Channels (20, 1.5) with three states (ON/FIRED/OFF), momentum histogram, bars-since-fire tracking, and configurable parameters.
-- **NYSE TICK Index**: real-time market breadth via `request.security("USI:TICK", "1", close)` with six-tier classification and configurable thresholds.
-- **Squeeze scoring condition (#8)**: enhancement condition scores +1 when squeeze fired or fired within last 3 bars (~15 min).
-- **TICK scoring condition (#9)**: enhancement condition scores +1 when TICK exceeds bullish/bearish threshold.
-- **Scoring model expanded**: 5+2 (max 7) → 5+4 (max 9). `i_minScore` maxval updated from 7 to 9. Default remains 4.
-- **Dashboard expanded**: 16 → 18 fields. Added Squeeze (row 16) and TICK (row 17) with state-aware color coding and contextual status labels.
-- **New alert**: `alertcondition` for squeeze fired events. Dynamic alert includes momentum direction (BULLISH/BEARISH).
-- **Enhanced signal alerts**: dynamic `alert()` messages now append squeeze state and TICK value when respective features are enabled. Score denominator updated from /7 to /9.
-- **Signal tooltips**: updated to include squeeze and TICK context.
-- **Updated tuning profiles**: Conservative profile now includes Squeeze ON, TICK ON, Min Score 6.
-
-### v1.0 (2025-02-18)
-
-- Initial release of 5-minute variant.
-- Recalibrated EMA (9/15/21), RSI (10-period, 65/35 thresholds), ADX (18 no-trend), and ATR defaults for 5-minute bar dynamics.
-- Multi-timeframe confirmation layer: 1-min RSI, 1-min EMA trend, and 1-min VWAP cross via `request.security()`.
-- 5+2 scoring model with configurable minimum score threshold (default 4).
-- Expanded candle pattern detection: added inside bar breakout and 3-bar momentum patterns; adjusted strong close (55%) and hammer/star (1.8x) thresholds.
-- Explicit level proximity scoring (condition #7): near-support for CALLS, near-resistance for PUTS.
-- 16-field dashboard with 1m Trend and 1m RSI rows.
-- Opening range bar-count conversion (`ceil(minutes / 5)`) for 5-minute granularity.
-- Adjusted line extend distances (60 bars) and label offsets for 5-minute chart proportions.
-- Signal tooltips include score, MTF trend, and MTF RSI.
-- Dynamic alerts include score and MTF status.
-- Three tuning profiles: Conservative, Balanced, Aggressive.

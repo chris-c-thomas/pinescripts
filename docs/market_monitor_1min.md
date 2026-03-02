@@ -1,4 +1,4 @@
-# Market Monitor v1.0.0
+# Market Monitor - 1m
 
 General-purpose directional-bias overlay for multi-chart watchlist monitoring.
 

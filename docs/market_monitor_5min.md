@@ -1,4 +1,4 @@
-# Market Monitor 5m v1.0.0
+# Market Monitor - 5m
 
 5-minute optimized directional-bias overlay for multi-chart watchlist monitoring.
 

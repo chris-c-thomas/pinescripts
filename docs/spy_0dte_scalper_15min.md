@@ -1,4 +1,4 @@
-# 0DTE SPY Scalping Indicator (15-Minute) v1.1
+# 0DTE SPY Scalper - 15m
 
 **Platform**: TradingView
 **Language**: Pine Script v6
@@ -16,6 +16,7 @@ v1.1 introduces a fundamentally upgraded signal engine with tiered scoring weigh
 This is the 15-minute companion to the 1-minute and 5-minute SPY 0DTE Scalpers. It targets the highest-conviction directional swings with 15-60 minute hold times. The 15-minute chart produces ~26 RTH bars per session, so the signal engine is calibrated for maximum conviction per signal with the lowest total signal count across all three variants.
 
 **Role in the multi-chart hierarchy**:
+
 - **1-minute**: Micro-entry timing, rapid scalps (1-5 min holds)
 - **5-minute**: Swing-scalp trades, moderate conviction (5-25 min holds)
 - **15-minute** (this): Directional bias, structural trend context, high-conviction swings (15-60 min holds)
@@ -393,6 +394,7 @@ Five-state classifier based on ADX trend strength, EMA alignment, and VWAP posit
 The v1.1 signal engine uses a **tiered weighted confluence scoring model** — 3 structural conditions (2x weight) and 9 confirmation conditions (1x weight).
 
 **Gate conditions** (must all pass — AND-gated prerequisites, not scored):
+
 - Bar is confirmed (closed)
 - Within signal time window (default 10:00-15:45 ET)
 - ADX above no-trend threshold (when enabled)
@@ -497,6 +499,7 @@ Optional (off by default) subtle background tint when regime is BULLISH or BEARI
 ### Alerts
 
 **Static alerts** (`alertcondition`) — 7 total:
+
 - CALLS Signal
 - PUTS Signal
 - VWAP Cross Bullish
@@ -506,6 +509,7 @@ Optional (off by default) subtle background tint when regime is BULLISH or BEARI
 - **RSI Divergence** (new in v1.1)
 
 **Dynamic alerts** (`alert`) — 5 total:
+
 - CALLS signal with interpolated context (score/max, scoring mode, RSI, ADX, VWAP dist, mode, anchor, vol regime, MTF, squeeze, TICK, divergence)
 - PUTS signal with same context
 - Mode shift
@@ -762,6 +766,7 @@ Min Score:             5
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters). All dashboard updates occur only on `barstate.islast`. RSI divergence detection uses native `ta.lowest()` and `ta.highest()` with no loops. ATR regime and BB width percentile use simple `ta.sma()` comparisons. Score trend tracking uses bar indexing (`[1]`, `[2]`) with no arrays.
 
 **`request.security()` budget**: the script makes 13 `request.security()` calls total:
+
 - 4 for MTF (5-min RSI, 5-min EMA fast, 5-min EMA slow, 5-min MACD histogram)
 - 1 for 5-min VWAP cross detection
 - 3 for prior day data (high, low, close on daily timeframe)
@@ -826,38 +831,3 @@ This is well within TradingView's limit of 40 calls. Disabling MTF removes 5 cal
 15. **Score trend uses closing scores**: the 3-bar score history is computed from confirmed bar scores. Intra-bar score changes are not reflected until bar close.
 
 16. **Weighted scoring favors structural alignment**: by design, a signal can reach score 6 (all structural) with zero confirmation conditions. At the default min score of 7, at least one confirmation is always required. Lowering below 6 in weighted mode allows pure-structural signals, which may be too permissive.
-
----
-
-## Changelog
-
-### v1.1 (2025-02-24)
-
-- **Weighted scoring engine**: structural conditions (VWAP position, EMA alignment, anchor EMA) score 2x; confirmation conditions score 1x. Weighted max: 15. Equal max: 12. Toggle between modes via input. Dashboard header shows `[W]`/`[EQ]`. Default min score updated to 7.
-- **RSI divergence detection**: classic bullish/bearish divergence over configurable lookback (default 5 bars = 1.25 hrs). Integrated as confirmation scoring condition (1x). Dashboard row, alert condition, and dynamic alert added.
-- **ATR regime classification**: current ATR vs 20-bar SMA ratio with HIGH/NORMAL/LOW labels. Displayed in ATR dashboard row and dedicated Vol Regime row. Not scored.
-- **Score trend indicator**: 3-bar trajectory tracking (BUILDING/RISING/STEADY/FALLING/FADING) with score history. Dashboard row added. Not scored.
-- **Prior day VWAP close**: new key level plotted as dotted cyan line. Added to level proximity detection pool for scoring. Dashboard row shows distance and ABOVE/BELOW status. +1 `request.security()` call (13 total).
-- **Bollinger Band width percentile**: BB width vs 20-bar SMA ratio with EXPANDING/NORMAL/COMPRESSING labels. Dashboard row added. Not scored.
-- **Dashboard expanded**: 21 rows -> 26 rows. New rows: Score Trend (12), RSI Div (19), BB Width (21), PD VWAP (23), Vol Regime (24).
-- **Alert additions**: RSI divergence `alertcondition()` and dynamic `alert()` added. Dynamic signal alerts now include scoring mode, ATR regime, and divergence context. Alert score denominators updated to reflect weighted/equal max.
-- **Signal tooltips**: updated to include scoring mode, ATR regime label, and RSI divergence state.
-- **Scoring condition count**: 11 -> 12 (added RSI divergence as confirmation condition #12).
-- **Level proximity pool**: expanded to include prior day VWAP close with directional support/resistance logic.
-- **Color additions**: `C_PD_VWAP` (#40C4FF light blue) for prior day VWAP line/label, `C_CYAN` (#40C4FF) for LOW/COMPRESSING states.
-
-### v1.0 (2025-02-24)
-
-- Initial release of 15-minute variant.
-- Recalibrated EMA (10/21/34), RSI (9-period, 60/40 thresholds), ADX (20 no-trend), and signal parameters for 15-minute bar dynamics.
-- Anchor EMA (50-period): structural trend reference spanning ~2 sessions. Plotted as purple line. Enhancement condition #11.
-- Multi-timeframe confirmation layer (5-minute): RSI, EMA trend, MACD histogram, VWAP cross.
-- 5-min MACD histogram: momentum indicator. MACD(12,26,9) on 5-min. Enhancement condition #7.
-- SMA-smoothed NYSE TICK: raw and SMA(5)-smoothed TICK from 1-min. Calibrated thresholds (300/-300/600).
-- 5+6 scoring model (max 11). Six enhancement conditions.
-- Expanded candle patterns: morning star / evening star for 15-min.
-- 30-minute opening range default.
-- Directional bias background (optional).
-- Session progress indicator.
-- 21-field dashboard.
-- Three tuning profiles.

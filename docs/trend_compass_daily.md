@@ -1,4 +1,4 @@
-# Trend Compass Daily v1.0.0
+# Trend Compass - Daily
 
 Strategic trend assessment overlay for equities, ETFs, and indices.
 
@@ -539,33 +539,3 @@ Some Western traders prefer 10/30/60/30 to adapt for the 5-day week, but the ori
 - **Fibonacci levels are range-based, not swing-based**: The fib module uses the highest high and lowest low over a lookback window, not algorithmically detected swing points. This is simpler and more stable but may not always match hand-drawn fibs.
 - **Prior week/month levels use `lookahead=barmerge.lookahead_on`**: This is correct for daily charts (we want the completed prior period), but means these levels are forward-looking in backtesting contexts. This is standard practice for reference levels.
 - **OBV is volume-dependent**: For instruments with unreliable or synthetic volume data (some indices, some forex), OBV readings may be misleading. Disable the OBV module for these instruments.
-
----
-
-## Changelog
-
-### v1.0.0 (2026-02-27)
-
-Initial release.
-
-- EMA Ribbon (10/21/50) with dynamic cloud fill.
-- 200 EMA anchor with distance-from-200 percentage tracking.
-- Weekly 50 EMA via `request.security()` for macro trend context.
-- Trend Phase Classifier: EMERGING / ACCELERATING / MATURE / EXHAUSTING / CONSOLIDATING / REVERSING.
-- Composite Weighted Trend Score (-11 to +11) with 8 conditions across structural (2x) and confirmation (1x) tiers.
-- Score trend tracking (IMPROVING / STABLE / FADING) via 5-bar SMA comparison.
-- ADX with slope analysis (RISING / FLAT / FALLING).
-- 50 EMA slope and slope acceleration for trend curvature analysis.
-- RSI divergence detection (bullish, bearish, hidden bull, hidden bear) with visual line segments.
-- MACD divergence detection with visual line segments.
-- OBV trend confirmation (CONFIRMING / DIVERGING / NEUTRAL).
-- Relative Volume (20-bar SMA baseline) with 4-tier classification.
-- ATR percentile ranking with 4-tier regime classification.
-- Bollinger Band Width percentile for compression detection.
-- 52-week high/low with position-in-range percentage.
-- Prior week high/low/close reference levels.
-- Prior month high/low/close reference levels.
-- Fibonacci retracement (optional, default OFF) with 38.2%, 50%, 61.8% levels.
-- Ichimoku Cloud (optional, default OFF) with standard 9/26/52/26 parameters.
-- 17-row dashboard with configurable position and size.
-- 12 alert conditions: phase change, strong bull/bear, neutral cross, RSI/MACD divergences, golden/death cross, ATR regime change, BB extreme compression.

@@ -1,4 +1,4 @@
-# Trend Compass 4H v1.0.0
+# Trend Compass 4H
 
 4-hour optimized strategic trend assessment overlay for equities, ETFs, and indices.
 
@@ -379,34 +379,3 @@ Standard 9/26/52/26. On 4H bars, these translate to approximately:
 - **52-Week H/L via `request.security`**: Requires the Daily timeframe to have 252 bars of history. This is standard for all liquid US equities and ETFs, but may be limited for very recently listed instruments.
 - **OBV on 4H bars**: 4H volume bars aggregate intraday volume differently depending on whether extended hours are enabled. OBV trend direction is generally reliable, but absolute OBV values may differ from daily OBV calculations.
 - **Divergence detection inherent lag**: 2-bar right pivot = ~8 hours of confirmation delay. This is faster than the Daily variant but still not instantaneous.
-
----
-
-## Changelog
-
-### v1.0.0 (2026-02-27)
-
-Initial release.
-
-- EMA Ribbon (10/21/50) on 4H bars with dynamic cloud fill and 0.3% compression threshold.
-- Daily 200 EMA as institutional anchor via `request.security()`.
-- Daily 50 EMA as intermediate structural reference via `request.security()`.
-- Weekly 50 EMA as macro trend context via `request.security()`.
-- Trend Phase Classifier with 4H-tuned crossover windows (4/6 bars).
-- Composite Weighted Trend Score (-11 to +11) with 8 conditions.
-- Score trend tracking (IMPROVING / STABLE / FADING) via 5-bar SMA.
-- ADX with slope analysis (RISING / FLAT / FALLING).
-- 50 EMA slope with 0.005 threshold and slope acceleration.
-- RSI divergence detection with 4L/2R pivots and 20-bar decay.
-- MACD divergence detection with 4L/2R pivots and 20-bar decay.
-- OBV trend confirmation (CONFIRMING / DIVERGING / NEUTRAL).
-- Relative Volume (20-bar SMA baseline).
-- ATR percentile ranking with 200-bar default lookback.
-- BB Width percentile with 200-bar default lookback.
-- 52-week high/low via Daily `request.security()` for accuracy.
-- Prior Day H/L/C reference levels.
-- Prior Week H/L/C reference levels.
-- Fibonacci retracement (optional, default OFF) with 100-bar lookback.
-- Ichimoku Cloud (optional, default OFF) with standard 9/26/52/26 parameters.
-- 18-row dashboard with configurable position and size.
-- 12 alert conditions including Daily golden/death cross detection.

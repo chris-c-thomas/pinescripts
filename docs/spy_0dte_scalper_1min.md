@@ -1,4 +1,4 @@
-# 0DTE SPY Scalping Indicator (1-Minute) v1.1
+# 0DTE SPY Scalper - 1m
 
 **Platform**: TradingView
 **Language**: Pine Script v6
@@ -698,33 +698,3 @@ TICK Filter:           OFF
 6. **No backtest capability**: this is an `indicator()`, not a `strategy()`. It cannot be backtested through TradingView's strategy tester. Converting to a strategy would require defining entry/exit rules, position sizing, and stop/target logic.
 
 7. **Equal-weighted conditions**: all AND-gate conditions are treated as binary pass/fail. In practice, some conditions (like VWAP position) may be more predictive than others. The 5-minute variant's scoring model partially addresses this by allowing partial confluence.
-
----
-
-## Changelog
-
-### v1.1 (2025-02-20)
-
-- **TTM Squeeze detection**: Bollinger Bands (20, 2.0) vs Keltner Channels (20, 1.5) with three states (ON/FIRED/OFF), momentum histogram, bars-since-fire tracking, and configurable parameters.
-- **NYSE TICK Index**: real-time market breadth via `request.security("USI:TICK", "1", close)` with six-tier classification and configurable thresholds.
-- **Squeeze signal filter**: opt-in AND-gate filter (`i_requireSqueeze`, default OFF) suppresses signals during active squeeze periods.
-- **TICK signal filter**: opt-in AND-gate filter (`i_requireTick`, default OFF) requires directional TICK alignment for signals.
-- **Dashboard expanded**: 14 → 16 fields. Added Squeeze (row 14) and TICK (row 15) with state-aware color coding and contextual status labels.
-- **New alert**: `alertcondition` for squeeze fired events. Dynamic alert includes momentum direction (BULLISH/BEARISH).
-- **Enhanced signal alerts**: dynamic `alert()` messages now append squeeze state and TICK value when respective features are enabled.
-- **Signal tooltips**: updated to include squeeze and TICK context.
-
-### v1.0 (2025-02-18)
-
-- Initial release.
-- EMA Ribbon with dynamic cloud fill.
-- Session-anchored VWAP with standard deviation bands.
-- RSI, ADX/DMI, ATR calculations with dashboard display.
-- Pre-Market High/Low, Prior Day H/L/C, Opening Range, Session HOD/LOD levels.
-- Five-mode regime classifier (BULLISH, BEARISH, RANGING, NO TRADE, TRANSITION).
-- AND-gate signal engine with core conditions and configurable filters.
-- Signal filtering (time window, cooldown, bar confirmation, ADX gate, VWAP extension).
-- CALLS/PUTS labels with tooltips, arrow shapes, VWAP cross markers, background flash.
-- 14-field real-time dashboard with color-coded status indicators.
-- Dual alert system (alertcondition + alert with dynamic messages).
-- Full input configurability with grouped settings panel.
