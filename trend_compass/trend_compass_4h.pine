@@ -815,14 +815,14 @@ if i_showDash and barstate.islast
 // ============================================================================
 // ALERTS
 // ============================================================================
-string prevPhase = nz(trendPhase[1], "CONSOLIDATING")
+string prevPhase = na(trendPhase[1]) ? "CONSOLIDATING" : trendPhase[1]
 bool phaseChanged = trendPhase != prevPhase
 
-alertcondition(phaseChanged, "Trend Phase Changed", "{{ticker}} trend phase changed to " + trendPhase + " on {{interval}}")
+alertcondition(phaseChanged, "Trend Phase Changed", "{{ticker}} trend phase changed on {{interval}}")
 
 int strongThresh = i_useWeighted ? 7 : 5
-alertcondition(trendScore >= strongThresh,    "Strong Bullish Trend",   "{{ticker}} trend score >= +" + str.tostring(strongThresh) + " on {{interval}}")
-alertcondition(trendScore <= -strongThresh,   "Strong Bearish Trend",   "{{ticker}} trend score <= -" + str.tostring(strongThresh) + " on {{interval}}")
+alertcondition(trendScore >= strongThresh, "Strong Bullish Trend", "{{ticker}} strong bullish trend score on {{interval}}")
+alertcondition(trendScore <= -strongThresh, "Strong Bearish Trend", "{{ticker}} strong bearish trend score on {{interval}}")
 alertcondition(ta.cross(trendScore, 0),       "Score Crossed Neutral",  "{{ticker}} trend score crossed zero on {{interval}}")
 
 alertcondition(rsiDivState == "BULL DIV" and rsiDivState[1] != "BULL DIV",     "RSI Bullish Divergence",  "{{ticker}} RSI bullish divergence detected on {{interval}}")
@@ -837,10 +837,11 @@ bool deathCross  = not na(d50Ema) and not na(d200Ema) and d50Ema < d200Ema and n
 alertcondition(goldenCross, "Golden Cross (D50/D200)", "{{ticker}} Daily 50 EMA crossed above Daily 200 EMA on {{interval}}")
 alertcondition(deathCross,  "Death Cross (D50/D200)",  "{{ticker}} Daily 50 EMA crossed below Daily 200 EMA on {{interval}}")
 
-bool atrRegimeChange = atrRegime != nz(atrRegime[1], "NORMAL")
-alertcondition(atrRegimeChange, "ATR Regime Change", "{{ticker}} ATR regime changed to " + atrRegime + " on {{interval}}")
+string prevAtrRegime = na(atrRegime[1]) ? "NORMAL" : atrRegime[1]
+bool atrRegimeChange = atrRegime != prevAtrRegime
+alertcondition(atrRegimeChange, "ATR Regime Change", "{{ticker}} ATR regime changed on {{interval}}")
 
-alertcondition(bbwPctl < 5, "BB Extreme Compression", "{{ticker}} BB width at " + f0(bbwPctl) + "th percentile — breakout watch on {{interval}}")
+alertcondition(bbwPctl < 5, "BB Extreme Compression", "{{ticker}} BB width is in extreme compression (<5th percentile) on {{interval}}")
 
 // ============================================================================
 // END
