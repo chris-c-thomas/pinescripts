@@ -36,9 +36,9 @@ Purpose-built for scalping SPY 0DTE options. Each variant is tightly coupled to 
 
 | Variant | Script | Docs | Base Signal | Key Filters | Target Environment |
 |:--------|:-------|:-----|:------------|:------------|:-------------------|
-| **1-Minute** | `spy_0dte_scalper_1min.pine` | `spy_0dte_scalper_1min.md` | 9/21 EMA Cross | VWAP, RSI, Engulfing/Pinbar | High-frequency momentum scalping |
-| **5-Minute** | `spy_0dte_scalper_5min.pine` | `spy_0dte_scalper_5min.md` | MACD Cross | VWAP, RSI, 9/21 EMA | Standard intraday trend following |
-| **15-Minute** | `spy_0dte_scalper_15min.pine` | `spy_0dte_scalper_15min.md` | MACD Cross | VWAP, RSI, 9/21 EMA | Session-level structural swings |
+| **1-Minute** | [`spy_0dte_scalper_1min.pine`](scripts/spy_0dte_scalper/spy_0dte_scalper_1min.pine) | [docs](docs/spy_0dte_scalper/spy_0dte_scalper_1min.md) | 9/21 EMA Cross | VWAP, RSI, Engulfing/Pinbar | High-frequency momentum scalping |
+| **5-Minute** | [`spy_0dte_scalper_5min.pine`](scripts/spy_0dte_scalper/spy_0dte_scalper_5min.pine) | [docs](docs/spy_0dte_scalper/spy_0dte_scalper_5min.md) | MACD Cross | VWAP, RSI, 9/21 EMA | Standard intraday trend following |
+| **15-Minute** | [`spy_0dte_scalper_15min.pine`](scripts/spy_0dte_scalper/spy_0dte_scalper_15min.pine) | [docs](docs/spy_0dte_scalper/spy_0dte_scalper_15min.md) | MACD Cross | VWAP, RSI, 9/21 EMA | Session-level structural swings |
 
 ---
 
@@ -48,9 +48,9 @@ Designed for multi-chart grid layouts (e.g., 6-8 charts per screen). The Market 
 
 | Variant | Script | Docs | Anchor | Session Tracking | Unique Features |
 |:--------|:-------|:-----|:-------|:-----------------|:----------------|
-| **1-Minute** | `market_monitor_1min.pine` | `market_monitor_1min.md` | Session VWAP | N/A | Lightweight, adaptive, equal-weight scoring |
-| **5-Minute** | `market_monitor_5min.pine` | `market_monitor_5min.md` | 15m EMA | 5m Phase Intervals | TTM Squeeze, TICK, Weighted Scoring (-11 to +11) |
-| **15-Minute** | `market_monitor_15min.pine` | `market_monitor_15min.md` | 1H EMA | 15m Phase Intervals | TTM Squeeze, TICK, Session-level stability bias |
+| **1-Minute** | [`market_monitor_1min.pine`](scripts/market_monitor/market_monitor_1min.pine) | [docs](docs/market_monitor/market_monitor_1min.md) | Session VWAP | N/A | Lightweight, adaptive, equal-weight scoring |
+| **5-Minute** | [`market_monitor_5min.pine`](scripts/market_monitor/market_monitor_5min.pine) | [docs](docs/market_monitor/market_monitor_5min.md) | 15m EMA | 5m Phase Intervals | TTM Squeeze, TICK, Weighted Scoring (-11 to +11) |
+| **15-Minute** | [`market_monitor_15min.pine`](scripts/market_monitor/market_monitor_15min.pine) | [docs](docs/market_monitor/market_monitor_15min.md) | 1H EMA | 15m Phase Intervals | TTM Squeeze, TICK, Session-level stability bias |
 
 ---
 
@@ -60,10 +60,10 @@ The strategic context layer. Evaluates the lifecycle of a trend (Emerging → Ac
 
 | Variant | Script | Docs | HTF References | Divergence Config | Cadence |
 |:--------|:-------|:-----|:---------------|:------------------|:--------|
-| **Daily** | `trend_compass_daily.pine` | `trend_compass_daily.md` | Weekly 50, Prior M/W H/L/C | 5L/5R pivots, 60-bar decay | 1 bar per session |
-| **4-Hour** | `trend_compass_4h.pine` | `trend_compass_4h.md` | Daily 50, Daily 200, Weekly 50 | 4L/2R pivots, 20-bar decay | ~2 bars per session |
-| **1-Hour** | `trend_compass_1h.pine` | `trend_compass_1h.md` | 4H 50, Daily 50, Daily 200, Weekly 50 | 3L/2R pivots, 30-bar decay | ~6.5 bars per session |
-| **15-Minute** | `trend_compass_15m.pine` | `trend_compass_15m.md` | 1H 50, 4H 50, Daily 50, Daily 200 | 3L/2R pivots, 40-bar decay | 26 bars per session |
+| **Daily** | [`trend_compass_daily.pine`](scripts/trend_compass/trend_compass_daily.pine) | [docs](docs/trend_compass/trend_compass_daily.md) | Weekly 50, Prior M/W H/L/C | 5L/5R pivots, 60-bar decay | 1 bar per session |
+| **4-Hour** | [`trend_compass_4h.pine`](scripts/trend_compass/trend_compass_4h.pine) | [docs](docs/trend_compass/trend_compass_4h.md) | Daily 50, Daily 200, Weekly 50 | 4L/2R pivots, 20-bar decay | ~2 bars per session |
+| **1-Hour** | [`trend_compass_1h.pine`](scripts/trend_compass/trend_compass_1h.pine) | [docs](docs/trend_compass/trend_compass_1h.md) | 4H 50, Daily 50, Daily 200, Weekly 50 | 3L/2R pivots, 30-bar decay | ~6.5 bars per session |
+| **15-Minute** | [`trend_compass_15m.pine`](scripts/trend_compass/trend_compass_15m.pine) | [docs](docs/trend_compass/trend_compass_15min.md) | 1H 50, 4H 50, Daily 50, Daily 200 | 3L/2R pivots, 40-bar decay | 26 bars per session |
 
 Each variant is calibrated for its timeframe: compression thresholds, EMA slope sensitivity, crossover windows, and divergence pivot parameters all scale appropriately. The 15-minute and 1-hour variants provide the fastest divergence feedback and intraday trend assessment, while the Daily variant provides the broadest structural picture with the least noise.
 
