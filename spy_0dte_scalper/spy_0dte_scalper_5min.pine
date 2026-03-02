@@ -1,7 +1,6 @@
 // ============================================================================
 // SPY 0DTE Scalper
 // Timeframe: 5-minute
-// Version: 1.1.0
 // Author: Chris Thomas
 // ============================================================================
 
@@ -10,8 +9,8 @@
 // ============================================================================
 //@version=6
 indicator(
-     title     = "SPY 0DTE Scalper (5m)",
-     shorttitle = "SPY-0DTE-5m",
+     title     = "SPY 0DTE Scalper - 5m",
+     shorttitle = "SPY-0-5m",
      overlay   = true,
      max_labels_count  = 500,
      max_lines_count   = 500,
