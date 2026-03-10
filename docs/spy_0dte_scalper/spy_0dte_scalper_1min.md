@@ -27,6 +27,7 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
   - [ATR](#atr)
   - [TTM Squeeze](#ttm-squeeze)
   - [NYSE TICK Index](#nyse-tick-index)
+  - [Volume Footprint](#volume-footprint)
   - [Key Price Levels](#key-price-levels)
   - [Regime / Mode Detection](#regime--mode-detection)
   - [Signal Engine](#signal-engine)
@@ -61,6 +62,7 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
 - **RSI, ADX, and ATR** calculated internally and displayed in the dashboard (not plotted as separate panes, preserving chart real estate).
 - **TTM Squeeze detection** identifying Bollinger Band compression inside Keltner Channels — a precursor to volatility expansion and directional breakouts. Three states: SQUEEZE ON (compression building), FIRED (breakout beginning), and OFF (normal volatility). Optional signal filter suppresses entries during active squeeze.
 - **NYSE TICK Index** pulled via `request.security()` for real-time market breadth confirmation. Six-tier classification from EXTREME BEAR to EXTREME BULL. Optional signal filter requires directional TICK alignment.
+- **Volume Footprint** (v1.2) integration via `request.footprint()` for intrabar order flow visibility. Displays buy/sell volume, delta with strength classification (STRONG BUY through STRONG SELL), and Point of Control (POC) as a step-line reference level. Dashboard-only — does not affect signal generation. Requires TradingView Premium or Ultimate plan; degrades gracefully to N/A on lower plans.
 - **Pre-Market High/Low** automatically detected and drawn as horizontal levels once RTH begins.
 - **Prior Day High/Low/Close** pulled from the daily timeframe and plotted as dotted reference levels.
 - **Opening Range** (configurable duration) captured at RTH open and drawn as dashed levels.
@@ -68,7 +70,7 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
 - **Regime Classifier** that categorizes the current market state into one of five modes: BULLISH, BEARISH, RANGING, NO TRADE, or TRANSITION.
 - **AND-gate signal engine** that requires all core conditions to pass and generates CALLS or PUTS labels, with optional squeeze and TICK filters that can be independently enabled.
 - **VWAP cross markers** (diamond shapes) for quick visual identification of VWAP reclaims and rejections.
-- **Real-time dashboard** (table overlay) showing 16 fields of live indicator data including squeeze state and TICK value, with color-coded status text.
+- **Real-time dashboard** (table overlay) showing 20 fields of live indicator data including squeeze state, TICK value, and footprint order flow, with color-coded status text.
 - **Dual alert system**: static `alertcondition()` entries for TradingView's standard alert UI (including squeeze fired), plus dynamic `alert()` calls with interpolated context including squeeze and TICK status for webhook/notification pipelines.
 - **Bar confirmation gate** to prevent signals from firing on incomplete (still-forming) bars, eliminating phantom signals.
 - **Signal cooldown** to prevent label spam during rapid price action.
@@ -669,7 +671,7 @@ TICK Filter:           OFF
 
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters) to avoid reallocation on every bar. The dashboard table is updated only on `barstate.islast` to reduce computation overhead on historical bars. TTM Squeeze calculations (BB, KC, linear regression) use native `ta.*` functions and add negligible overhead.
 
-**`request.security()` budget**: the script makes 5 `request.security()` calls total: 3 for prior day data (high, low, close on daily timeframe), 1 for daily open, and 1 for NYSE TICK (1-minute timeframe). This is well within TradingView's limit of 40 calls per script. When TICK is disabled, only 4 calls are active.
+**`request.*()` budget**: the script makes 6 `request.*()` calls total: 3 for prior day data (high, low, close on daily timeframe), 1 for daily open, 1 for NYSE TICK (1-minute timeframe), and 1 for `request.footprint()` (volume footprint data). This is well within TradingView's limit of 40 calls per script. When TICK is disabled, 5 calls are active; when footprint is also disabled, 4 calls.
 
 **Repainting**: all signal logic is gated by `barstate.isconfirmed` by default. This means signals only appear after a bar closes, not during its formation. This eliminates phantom signals but introduces a 1-bar delay on live charts. TICK data from `request.security()` uses `lookahead=barmerge.lookahead_off` ensuring no forward-looking data.
 
@@ -685,9 +687,9 @@ TICK Filter:           OFF
 
 ## Known Limitations
 
-1. **No cumulative delta / order flow**: Pine Script does not have access to tick-level bid/ask data. The indicator cannot compute cumulative delta, footprint charts, or order flow imbalances. Relative volume and NYSE TICK are the closest proxies available.
+1. **Footprint data repaints by design**: Volume footprint values (delta, POC, buy/sell volume) may differ between real-time and historical views due to TradingView's intrabar data resolution hierarchy. Real-time uses the most granular data available (1-tick on Premium+), while historical bars are recalculated with coarser intervals. This affects dashboard values only — footprint data does not influence signal generation on the 1-minute variant. Requires TradingView Premium or Ultimate plan; returns N/A on lower plans.
 
-2. **No volume profile**: Pine Script cannot natively compute volume profile (POC, VAH, VAL). These levels would be highly complementary for 0DTE trading but must be added via a separate indicator or TradingView's built-in VP tool.
+2. **Footprint POC is approximate**: the POC step-line plots the midpoint of the highest-volume price row. With the default 10 ticks/row ($0.10 per row on SPY), the plotted POC may differ from the exact highest-volume tick by up to $0.05.
 
 3. **Pre-market levels require extended hours**: if your chart does not have extended trading hours enabled, PM High/Low will not populate. The dashboard will show "N/A" and no PM level lines will render.
 

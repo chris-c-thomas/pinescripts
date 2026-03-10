@@ -42,6 +42,7 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
   - [TTM Squeeze + BB Width Percentile](#ttm-squeeze--bb-width-percentile)
   - [RSI Divergence Detection](#rsi-divergence-detection)
   - [NYSE TICK Index (Smoothed)](#nyse-tick-index-smoothed)
+  - [Volume Footprint](#volume-footprint)
   - [Multi-Timeframe Confirmation (5-Min)](#multi-timeframe-confirmation-5-min)
   - [Key Price Levels](#key-price-levels)
   - [Regime / Mode Detection](#regime--mode-detection)
@@ -149,6 +150,7 @@ Dashboard row shows the ratio and classification. Not directly scored.
 - **Bollinger Band Width Percentile** providing a continuous volatility metric relative to recent history. Three states: EXPANDING (>1.5x), NORMAL, COMPRESSING (<0.7x). Complements the binary squeeze state.
 - **RSI Divergence Detection** over configurable lookback (default 5 bars = 1.25 hrs). Classic bullish/bearish divergence scored as confirmation condition (1x). Dashboard and alert integration.
 - **NYSE TICK Index with SMA smoothing** pulled via `request.security()`. Raw and 5-period SMA-smoothed TICK pulled; smoothed value used for scoring with calibrated lower thresholds (300/-300/600).
+- **Volume Footprint** (v1.2) integration via `request.footprint()` for deep intrabar order flow analysis. Displays buy/sell volume, delta with strength classification, cumulative session delta, and POC/VAH/VAL as step-line levels. Delta integrated as 1x confirmation scoring condition (ON by default). Prior bar's POC enriches the support/resistance proximity pool. Requires TradingView Premium or Ultimate plan; degrades gracefully to N/A on lower plans.
 - **Multi-timeframe confirmation layer (5-minute)** pulling 5-min RSI, EMA trend, MACD histogram, and VWAP cross via `request.security()`.
 - **Pre-Market High/Low** automatically detected and drawn as horizontal levels once RTH begins.
 - **Prior Day High/Low/Close** pulled from the daily timeframe and plotted as dotted reference levels.
@@ -157,13 +159,13 @@ Dashboard row shows the ratio and classification. Not directly scored.
 - **Session HOD/LOD** tracked in real time with dynamically updating lines.
 - **Session progress indicator** showing current bar count out of ~26 total RTH bars.
 - **Regime Classifier** categorizing current market state into BULLISH, BEARISH, RANGING, NO TRADE, or TRANSITION.
-- **Weighted confluence scoring engine** (new in v1.1): 3 structural conditions (2x weight) + 9 confirmation conditions (1x weight). Weighted max: 15. Equal-weight max: 12. Toggle between modes.
+- **Weighted confluence scoring engine** (v1.1, expanded in v1.2): 3 structural conditions (2x weight) + 10 confirmation conditions (1x weight, including footprint delta). Weighted max: 16. Equal-weight max: 13. Toggle between modes.
 - **Score Trend Indicator** (new in v1.1): 3-bar score trajectory tracking. BUILDING / RISING / STEADY / FALLING / FADING with history display.
 - **Expanded candle pattern detection** optimized for 15-min bars: engulfing, strong close (60% body), hammer/shooting star (1.6x tail), inside bar breakout, 3-bar momentum, morning star/evening star.
 - **Directional bias background** (optional, off by default): subtle full-bar tint when regime is directional.
 - **VWAP cross markers** (diamond shapes) for quick visual identification.
-- **Real-time dashboard** (26-row table overlay) with all indicator data, scoring mode indicator, score trend, ATR regime, BB width, RSI divergence, prior VWAP close rows.
-- **Dual alert system**: static `alertcondition()` entries (7 total, including RSI divergence) plus dynamic `alert()` calls with interpolated context including scoring mode, ATR regime, and divergence status.
+- **Real-time dashboard** (31-row table overlay) with all indicator data, scoring mode indicator, score trend, ATR regime, BB width, RSI divergence, prior VWAP close, and footprint order flow rows.
+- **Dual alert system**: static `alertcondition()` entries (11 total, including RSI divergence and footprint delta/cumulative delta crossovers) plus dynamic `alert()` calls with interpolated context including scoring mode, ATR regime, divergence, and footprint status.
 - **Bar confirmation gate** and **signal cooldown** (default 2 bars = 30 minutes).
 
 ---
@@ -765,7 +767,7 @@ Min Score:             5
 
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters). All dashboard updates occur only on `barstate.islast`. RSI divergence detection uses native `ta.lowest()` and `ta.highest()` with no loops. ATR regime and BB width percentile use simple `ta.sma()` comparisons. Score trend tracking uses bar indexing (`[1]`, `[2]`) with no arrays.
 
-**`request.security()` budget**: the script makes 13 `request.security()` calls total:
+**`request.*()` budget**: the script makes 14 `request.*()` calls total:
 
 - 4 for MTF (5-min RSI, 5-min EMA fast, 5-min EMA slow, 5-min MACD histogram)
 - 1 for 5-min VWAP cross detection
@@ -773,10 +775,13 @@ Min Score:             5
 - **1 for prior day VWAP close** (new in v1.1)
 - 1 for daily open
 - 2 for NYSE TICK (1-min raw close, 1-min SMA(5) smoothed)
+- **1 for `request.footprint()`** (new in v1.2, volume footprint data)
 
-This is well within TradingView's limit of 40 calls. Disabling MTF removes 5 calls (8 remaining); disabling TICK removes 2 (11 remaining).
+This is well within TradingView's limit of 40 calls. Disabling MTF removes 5 calls; disabling TICK removes 2; disabling footprint removes 1.
 
-**Repainting**: all signal logic is gated by `barstate.isconfirmed`. MTF data uses `lookahead=barmerge.lookahead_off`. Prior day data uses `lookahead=barmerge.lookahead_on` with `[1]` offset for correct historical behavior.
+**Repainting**: all signal logic is gated by `barstate.isconfirmed`. MTF data uses `lookahead=barmerge.lookahead_off`. Prior day data uses `lookahead=barmerge.lookahead_on` with `[1]` offset for correct historical behavior. **Footprint data repaints by design** — `request.footprint()` has no `lookahead` parameter. Real-time uses 1-tick granularity (Premium+) while historical bars recalculate with coarser intervals. The footprint delta scoring condition (1x weight) is documented as repainting-capable; at 1 point on a 16-point scale (6.25%), the impact is within the scoring engine's noise floor.
+
+**Footprint level proximity**: the prior bar's POC (`fpPocPrice[1]`) is injected into the `nearSupport` / `nearResistance` OR chains. The `[1]` offset ensures the POC reference is from a finalized bar, reducing repainting impact in the proximity calculation. Cumulative session delta (`fpCumDelta`) uses a `var` variable that resets at RTH open and accumulates each bar's delta — note that per-bar delta shifts from recalculation propagate into the cumulative total.
 
 **Object limits**: Pine Script v6 allows 500 labels, 500 lines, 200 boxes. The addition of PD VWAP adds 1 line + 1 label. On a 15-min chart (~26 bars/session), object limits are never approached.
 
@@ -800,9 +805,9 @@ This is well within TradingView's limit of 40 calls. Disabling MTF removes 5 cal
 
 ## Known Limitations
 
-1. **No cumulative delta / order flow**: Pine Script does not provide tick-level bid/ask data. Relative volume and NYSE TICK are the closest available proxies.
+1. **Footprint data repaints by design**: Volume footprint values (delta, POC, VAH, VAL, buy/sell volume, cumulative delta) may differ between real-time and historical views due to TradingView's intrabar data resolution hierarchy. Real-time uses the most granular data available (1-tick on Premium+), while historical bars are recalculated with coarser intervals. This affects the delta scoring condition (+/-1 point), dashboard values, POC/VA step lines, and cumulative session delta. The prior-bar POC used in level proximity uses a `[1]` offset to minimize repainting. Requires TradingView Premium or Ultimate plan; returns N/A on lower plans.
 
-2. **No volume profile**: Pine Script cannot natively compute VP (POC, VAH, VAL). Use TradingView's built-in VP tool as a complement.
+2. **Cumulative session delta drift**: because per-bar delta values may shift during historical recalculation, the cumulative session delta (`FP Cum D` in the dashboard) can diverge from what was observed in real-time. Treat cumulative delta as directional context rather than a precise metric.
 
 3. **Pre-market levels require extended hours**: if extended hours are not enabled, PM High/Low will not populate.
 

@@ -30,6 +30,7 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
   - [ATR](#atr)
   - [TTM Squeeze](#ttm-squeeze)
   - [NYSE TICK Index](#nyse-tick-index)
+  - [Volume Footprint](#volume-footprint)
   - [Multi-Timeframe Confirmation](#multi-timeframe-confirmation)
   - [Key Price Levels](#key-price-levels)
   - [Regime / Mode Detection](#regime--mode-detection)
@@ -66,16 +67,17 @@ The indicator does not auto-trade. It surfaces high-confluence setups as CALLS o
 - **RSI, ADX, and ATR** calculated internally and displayed in the dashboard (not plotted as separate panes, preserving chart real estate).
 - **TTM Squeeze detection** identifying Bollinger Band compression inside Keltner Channels — a precursor to volatility expansion and directional breakouts. Three states: SQUEEZE ON (compression building), FIRED (breakout beginning), and OFF (normal volatility). Integrated as an enhancement scoring condition with recency window.
 - **NYSE TICK Index** pulled via `request.security()` for real-time market breadth confirmation. Six-tier classification from EXTREME BEAR to EXTREME BULL. Integrated as an enhancement scoring condition requiring strong directional breadth.
-- **Multi-timeframe confirmation layer** pulling 1-minute RSI and EMA trend alignment via `request.security()` for lower-timeframe context on the 5-minute chart.
+- **Volume Footprint** (v1.2) integration via `request.footprint()` for intrabar order flow visibility. Displays delta with strength classification, buy/sell volume, and Point of Control (POC) as a step-line level. Optional enhancement scoring condition #10 (OFF by default to preserve backward compatibility). Requires TradingView Premium or Ultimate plan; degrades gracefully to N/A on lower plans.
+- **Multi-Timeframe confirmation layer** pulling 1-minute RSI and EMA trend alignment via `request.security()` for lower-timeframe context on the 5-minute chart.
 - **Pre-Market High/Low** automatically detected and drawn as horizontal levels once RTH begins.
 - **Prior Day High/Low/Close** pulled from the daily timeframe and plotted as dotted reference levels.
 - **Opening Range** (default 15 minutes / 3 bars) captured at RTH open and drawn as dashed levels.
 - **Session HOD/LOD** tracked in real time with dynamically updating lines.
 - **Regime Classifier** that categorizes the current market state into one of five modes: BULLISH, BEARISH, RANGING, NO TRADE, or TRANSITION.
-- **5+4 confluence scoring engine** with 5 core conditions and 4 optional enhancement conditions (MTF trend, level proximity, squeeze recency, TICK breadth). Generates CALLS or PUTS labels when the score meets the configurable threshold.
+- **5+4+1 confluence scoring engine** with 5 core conditions, 4 optional enhancement conditions (MTF trend, level proximity, squeeze recency, TICK breadth), and 1 optional footprint delta condition (#10, OFF by default). Generates CALLS or PUTS labels when the score meets the configurable threshold.
 - **Expanded candle pattern detection** optimized for 5-minute bars: engulfing, strong close, hammer/shooting star, inside bar breakout, and 3-bar momentum.
 - **VWAP cross markers** (diamond shapes) for quick visual identification of VWAP reclaims and rejections.
-- **Real-time dashboard** (table overlay) showing 18 fields of live indicator data including MTF, squeeze, and TICK rows, with color-coded status text.
+- **Real-time dashboard** (table overlay) showing 21 fields of live indicator data including MTF, squeeze, TICK, and footprint order flow rows, with color-coded status text.
 - **Dual alert system**: static `alertcondition()` entries for TradingView's standard alert UI (including squeeze fired), plus dynamic `alert()` calls with interpolated context including score, MTF, squeeze, and TICK status.
 - **Bar confirmation gate** to prevent signals from firing on incomplete (still-forming) bars.
 - **Signal cooldown** (default 3 bars = 15 minutes) to prevent label spam.
@@ -726,7 +728,7 @@ Min Score:             3
 
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters) to avoid reallocation on every bar. TTM Squeeze calculations (BB, KC, linear regression) use native `ta.*` functions and add negligible overhead. The dashboard table is updated only on `barstate.islast`.
 
-**`request.security()` budget**: the script makes 10 `request.security()` calls total: 3 for MTF (1-min RSI, 1-min EMA fast, 1-min EMA slow), 3 for prior day data (high, low, close on daily timeframe), 1 for daily open, 1 for 1-min VWAP cross detection, 1 for NYSE TICK (1-minute timeframe), plus the internal VWAP calculation. This is well within TradingView's limit of 40 calls per script. Disabling MTF removes 3 calls; disabling TICK removes 1.
+**`request.*()` budget**: the script makes 11 `request.*()` calls total: 3 for MTF (1-min RSI, 1-min EMA fast, 1-min EMA slow), 3 for prior day data (high, low, close on daily timeframe), 1 for daily open, 1 for 1-min VWAP cross detection, 1 for NYSE TICK (1-minute timeframe), 1 for `request.footprint()` (volume footprint data), plus the internal VWAP calculation. This is well within TradingView's limit of 40 calls per script. Disabling MTF removes 3 calls; disabling TICK removes 1; disabling footprint removes 1.
 
 **Repainting**: all signal logic is gated by `barstate.isconfirmed`. Signals appear after bar close only. MTF data from `request.security()` uses `lookahead=barmerge.lookahead_off` (no forward-looking data) for 1-minute pulls, ensuring no repainting from lower-timeframe data.
 
@@ -744,15 +746,15 @@ Min Score:             3
 
 ## Known Limitations
 
-1. **No cumulative delta / order flow**: Pine Script does not provide tick-level bid/ask data. Relative volume and NYSE TICK are the closest available proxies.
+1. **Footprint data repaints by design**: Volume footprint values (delta, POC, buy/sell volume) may differ between real-time and historical views due to TradingView's intrabar data resolution hierarchy. When footprint delta scoring (#10) is enabled, a signal that fired in real-time could shift by +-1 point on chart reload. This is why scoring is OFF by default. Requires TradingView Premium or Ultimate plan; returns N/A on lower plans.
 
-2. **No volume profile**: Pine Script cannot natively compute VP (POC, VAH, VAL). Use TradingView's built-in VP tool or a separate indicator as a complement.
+2. **Footprint POC is approximate**: the POC step-line plots the midpoint of the highest-volume price row. With the default 25 ticks/row ($0.25 per row on SPY), the plotted POC may differ from the exact highest-volume tick by up to $0.125.
 
 3. **Pre-market levels require extended hours**: if your chart does not have Extended Trading Hours enabled, PM High/Low will not populate.
 
 4. **Single-symbol calibration**: defaults are calibrated for SPY's price range and volatility. Other instruments require parameter adjustment.
 
-5. **Equal-weighted scoring**: all 9 conditions contribute equally to the score. Some conditions (like VWAP position) may be more predictive than others. Weighted scoring is a potential future enhancement.
+5. **Equal-weighted scoring**: all 10 conditions contribute equally to the score. Some conditions (like VWAP position) may be more predictive than others. The 15-minute variant's weighted scoring model partially addresses this by separating structural and confirmation tiers.
 
 6. **No backtest capability**: this is an `indicator()`, not a `strategy()`. It cannot be backtested through TradingView's strategy tester.
 
