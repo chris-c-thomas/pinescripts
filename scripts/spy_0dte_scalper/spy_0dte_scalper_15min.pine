@@ -1,8 +1,67 @@
 // ============================================================================
 // SPY 0DTE Scalper
 // Timeframe: 15-minute
-// Version: 1.0.0
+// Version: 1.2.0
 // Author: Chris Thomas
+// ============================================================================
+// Purpose-built overlay for establishing directional bias and identifying
+// high-conviction swing entries for SPY 0DTE options on the 15-minute chart.
+// Targets the highest-conviction directional swings with 15-60 minute hold
+// times. The 15-minute chart produces ~26 RTH bars per session, so the signal
+// engine is calibrated for maximum conviction with the lowest total signal
+// count across all three scalper variants.
+//
+// Uses a weighted confluence scoring engine: structural conditions (VWAP,
+// EMA alignment, Anchor EMA) receive 2x weight, confirmation conditions
+// receive 1x. Toggle between weighted and equal-weight modes. Weighted max:
+// 16 (with footprint). Equal max: 13. The indicator does not auto-trade.
+//
+// Role in the multi-chart hierarchy:
+//   - 1-minute:  Micro-entry timing, rapid scalps (1-5 min holds)
+//   - 5-minute:  Swing-scalp trades, moderate conviction (5-25 min holds)
+//   - 15-minute: Directional bias, structural context, high-conviction swings
+//
+// Key differences from 5-minute variant:
+//   - Weighted scoring engine (structural 2x vs confirmation 1x)
+//   - 50 EMA anchor for structural trend context
+//   - RSI divergence detection (pivot-based)
+//   - MACD histogram from 5-min MTF layer
+//   - NYSE TICK SMA-smoothed with lower thresholds (300/-300)
+//   - Prior Day VWAP Close as institutional reference level
+//   - Score trend indicator (3-bar trajectory tracking)
+//   - ATR regime classification + BB width percentile
+//   - Expanded candle patterns (inside bar breakout, 3-bar momentum,
+//     morning star / evening star)
+//   - Volume Footprint fully integrated: scoring, POC/VA level plots,
+//     prior-bar POC in proximity pool
+//   - Directional bias background tint (optional)
+//
+// Components:
+//   - EMA ribbon (9/15/21) + 50 EMA anchor
+//   - Session-anchored VWAP with standard deviation bands
+//   - RSI with pivot-based divergence detection
+//   - MACD momentum (via 5-min MTF layer)
+//   - ADX / DMI trend strength
+//   - ATR regime classification (percentile-ranked)
+//   - BB width percentile (compression detection)
+//   - TTM Squeeze detection (BB/KC compression)
+//   - NYSE TICK Index (raw + 5-period SMA smoothed, 6-tier)
+//   - Volume Footprint via request.footprint() (full integration:
+//     scoring condition, POC/VAH/VAL step-line plots, cumulative delta,
+//     prior-bar POC in S/R proximity pool). Premium/Ultimate required.
+//   - Multi-timeframe: 5-min RSI, EMA trend, MACD histogram, VWAP cross
+//   - Candle pattern detection (engulfing, strong close, hammer/shooting
+//     star, inside bar breakout, 3-bar momentum, morning/evening star)
+//   - Key levels: Prior Day H/L/C, Prior Day VWAP Close, Pre-Market H/L,
+//     Opening Range (30 min / 2 bars), HOD/LOD
+//   - Level proximity detection for scoring
+//   - Score trend indicator (BUILDING / RISING / STEADY / FALLING / FADING)
+//   - Regime classifier (BULLISH / BEARISH / RANGING / NO TRADE / TRANSITION)
+//   - Directional bias background (optional, off by default)
+//   - VWAP cross markers (diamond shapes)
+//   - Signal cooldown (default 2 bars = 30 minutes)
+//   - 31-row heads-up dashboard
+//   - Dual alert system: 11 alertcondition + 5 dynamic alert() calls
 // ============================================================================
 
 // ============================================================================

@@ -4,6 +4,34 @@
 // Version: 1.0.0
 // Author: Chris Thomas
 // ============================================================================
+// Purpose-built overlay for scalping SPY 0DTE options on the 1-minute chart.
+// Targets rapid momentum scalps with 1-5 minute hold times. The 1-minute
+// chart produces ~390 RTH bars per session, so the signal engine uses strict
+// AND-gate logic (all conditions must pass) to suppress noise and surface
+// only high-confluence setups as CALLS or PUTS labels.
+//
+// No scoring engine — pure boolean gating across price structure, momentum,
+// volatility, breadth, and candlestick confirmation. All thresholds are
+// configurable. The indicator does not auto-trade.
+//
+// Components:
+//   - EMA ribbon (9/21/50) with dynamic trend cloud fill
+//   - Session-anchored VWAP with standard deviation bands
+//   - RSI momentum filter (neutral-zone gating)
+//   - ADX / DMI trend strength filter
+//   - ATR realized volatility
+//   - TTM Squeeze detection (BB/KC compression) with optional signal filter
+//   - NYSE TICK Index breadth (6-tier classification, optional signal filter)
+//   - Volume Footprint via request.footprint() (dashboard-only, no signal
+//     coupling). Requires TradingView Premium/Ultimate.
+//   - Candle pattern detection (engulfing, strong close, hammer, shooting star)
+//   - Key levels: Prior Day H/L/C, Pre-Market H/L, Opening Range, HOD/LOD
+//   - Regime classifier (BULLISH / BEARISH / RANGING / NO TRADE)
+//   - VWAP cross markers (diamond shapes)
+//   - Signal cooldown (configurable bar count)
+//   - 20-row heads-up dashboard
+//   - Dual alert system: 9 alertcondition + 4 dynamic alert() calls
+// ============================================================================
 
 // ============================================================================
 // TradingView Pine Script v6

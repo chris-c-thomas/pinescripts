@@ -4,6 +4,46 @@
 // Version: 1.0.0
 // Author: Chris Thomas
 // ============================================================================
+// Purpose-built overlay for scalping SPY 0DTE options on the 5-minute chart.
+// Targets swing-scalp trades with 5-25 minute hold times. The 5-minute chart
+// produces ~78 RTH bars per session, so the signal engine is calibrated for
+// higher conviction per signal with lower total signal count compared to the
+// 1-minute variant.
+//
+// Uses a scoring engine (up to 10 equal-weight conditions) rather than the
+// 1-minute's strict AND-gate. Each condition contributes +1; signals fire
+// when the cumulative score meets a configurable minimum threshold. This
+// allows partial confluence to still generate signals when enough independent
+// conditions align. The indicator does not auto-trade.
+//
+// Key differences from 1-minute variant:
+//   - Scoring engine replaces AND-gate logic
+//   - EMA ribbon uses 9/15/21 (tighter fast/mid spacing)
+//   - Multi-timeframe layer pulls 1-min RSI, EMA trend, and VWAP cross
+//   - TICK integrated as scoring condition (requires >500 / <-500)
+//   - Volume Footprint delta available as optional scoring condition (#10)
+//   - Opening range default 15 minutes (3 bars)
+//
+// Components:
+//   - EMA ribbon (9/15/21) with dynamic trend cloud fill
+//   - Session-anchored VWAP with standard deviation bands
+//   - RSI momentum (scoring condition)
+//   - ADX / DMI trend strength (scoring condition)
+//   - ATR realized volatility
+//   - TTM Squeeze detection (BB/KC compression, scoring condition)
+//   - NYSE TICK Index breadth (6-tier, scoring condition #9)
+//   - Volume Footprint via request.footprint() (dashboard + optional
+//     scoring condition #10). Requires TradingView Premium/Ultimate.
+//   - Multi-timeframe confirmation: 1-min RSI, EMA trend, VWAP cross
+//   - Candle pattern detection (engulfing, strong close, hammer, shooting star)
+//   - Key levels: Prior Day H/L/C, Pre-Market H/L, Opening Range, HOD/LOD
+//   - Level proximity detection for scoring
+//   - Regime classifier (BULLISH / BEARISH / RANGING / NO TRADE)
+//   - VWAP cross markers (diamond shapes)
+//   - Signal cooldown (configurable bar count)
+//   - 21-row heads-up dashboard
+//   - Dual alert system: 9 alertcondition + 4 dynamic alert() calls
+// ============================================================================
 
 // ============================================================================
 // TradingView Pine Script v6
