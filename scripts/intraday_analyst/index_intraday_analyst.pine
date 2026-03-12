@@ -1,21 +1,27 @@
 // ============================================================================
-// SPX Intraday Analyst
+// Index Intraday Analyst
+//
 // Timeframe: 1-minute, 5-minute, 10-minute, 15-minute (adaptive)
 // Version: 1.0.0
 // Author: Chris Thomas
 // ============================================================================
-// Purpose-built intraday overlay for SPX (S&P 500 Cash Index from CBOE).
+// Intraday overlay for CBOE cash indices: SPX, NDX, RUT, DJX, etc.
 //
-// SPX has NO volume data on TradingView. This indicator is architected
-// around that constraint — every component is price-derived or pulled from
-// external symbols (VIX, NYSE TICK). Volume-dependent tools (VWAP, OBV,
-// relative volume, footprint) are replaced with:
+// CBOE cash indices have NO volume data on TradingView. This indicator
+// is architected around that constraint — every component is price-derived
+// or pulled from external symbols (VIX/VXN/RVX, NYSE TICK).
+// Volume-dependent tools (VWAP, OBV, relative volume, footprint) are
+// replaced with:
 //
 //   - Session-anchored TWAP (time-weighted average price) with std dev bands
-//   - VIX context module (fear gauge, slope, intraday change)
+//   - Volatility index context module (VIX, VXN, RVX — configurable)
 //   - Enhanced price-momentum stack (RSI, MACD, ADX/DMI, Stochastic)
 //   - TTM Squeeze (BB/KC compression — pure price + ATR)
 //   - NYSE TICK breadth integration
+//
+// Ticker-agnostic within the CBOE index family. The volatility index
+// symbol is configurable: CBOE:VIX for SPX, CBOE:VXN for NDX,
+// CBOE:RVX for RUT.
 //
 // Timeframe-adaptive: auto-detects chart TF and adjusts opening range
 // duration, ATR lookbacks, divergence sensitivity, and session bar math.
@@ -47,8 +53,8 @@
 // ============================================================================
 //@version=6
 indicator(
-     title          = "SPX Intraday Analyst",
-     shorttitle     = "SPX-IA",
+     title          = "Index Intraday Analyst",
+     shorttitle     = "IDX-IA",
      overlay        = true,
      max_labels_count  = 500,
      max_lines_count   = 500,
@@ -68,7 +74,7 @@ var string GP_STOCH    = "Stochastic"
 var string GP_ATR      = "ATR / Volatility"
 var string GP_SQUEEZE  = "TTM Squeeze"
 var string GP_TICK     = "NYSE TICK"
-var string GP_VIX      = "VIX Context"
+var string GP_VIX      = "Volatility Index"
 var string GP_LEVELS   = "Key Levels"
 var string GP_SESSION  = "Session & Time"
 var string GP_SIGNALS  = "Signal Logic"
@@ -145,7 +151,7 @@ i_showCloud    = input.bool(true, "Show EMA Cloud",                     group=GP
 // --- Session TWAP ---
 i_showTWAP     = input.bool(true,  "Show Session TWAP",                group=GP_TWAP)
 i_twapBandMult = input.float(1.5,  "TWAP Band Multiplier (Std Dev)",   minval=0.5, maxval=3.0, step=0.1, group=GP_TWAP,
-                   tooltip="Standard deviation multiplier for TWAP bands. Similar to VWAP bands but time-weighted since SPX has no volume.")
+                   tooltip="Standard deviation multiplier for TWAP bands. Time-weighted since CBOE cash indices have no volume.")
 
 // --- RSI ---
 i_rsiLen       = input.int(14,    "RSI Length",              minval=2,  group=GP_RSI)
@@ -188,9 +194,10 @@ i_tickBull     = input.int(500,        "TICK Bullish Threshold",  minval=100, gr
 i_tickBear     = input.int(-500,       "TICK Bearish Threshold",  maxval=-100, group=GP_TICK)
 i_tickExtreme  = input.int(1000,       "TICK Extreme Threshold",  minval=500, group=GP_TICK)
 
-// --- VIX Context ---
-i_useVIX       = input.bool(true,      "Enable VIX Context",               group=GP_VIX)
-i_vixSymbol    = input.string("CBOE:VIX", "VIX Symbol",                    group=GP_VIX)
+// --- Volatility Index Context ---
+i_useVIX       = input.bool(true,      "Enable Vol Index Context",          group=GP_VIX)
+i_vixSymbol    = input.string("CBOE:VIX", "Volatility Index Symbol",       group=GP_VIX,
+                   tooltip="SPX -> CBOE:VIX | NDX -> CBOE:VXN | RUT -> CBOE:RVX | DJX -> CBOE:VXD")
 i_vixLow       = input.float(15.0,     "VIX Low Threshold",     minval=5,  step=1, group=GP_VIX)
 i_vixElevated  = input.float(20.0,     "VIX Elevated Threshold", minval=10, step=1, group=GP_VIX)
 i_vixHigh      = input.float(25.0,     "VIX High Threshold",    minval=15, step=1, group=GP_VIX)
@@ -311,7 +318,7 @@ plot(i_useHTF and not na(htfAnchorEma) ? htfAnchorEma : na, "HTF Anchor EMA",
 // ============================================================================
 // SESSION-ANCHORED TWAP (VWAP SUBSTITUTE)
 // ============================================================================
-// Since SPX has no volume data, we compute a Time-Weighted Average Price:
+// Since CBOE cash indices have no volume data, we compute a Time-Weighted
 // running mean of typical price (HLC/3) anchored to the session start,
 // with standard deviation bands. This serves the same structural role as
 // VWAP — a session fair-value reference — but uses equal time weighting
@@ -474,10 +481,10 @@ else if i_useTick
     tickStr := "N/A"
 
 // ============================================================================
-// VIX CONTEXT MODULE
+// VOLATILITY INDEX CONTEXT MODULE
 // ============================================================================
-// VIX is the implied volatility of SPX options — the market's real-time
-// fear gauge. Provides context that raw price action cannot:
+// Companion volatility index provides context that price action alone cannot.
+// SPX uses VIX, NDX uses VXN, RUT uses RVX. The symbol is configurable.
 //   - Level: current VIX tier (LOW / NORMAL / ELEVATED / HIGH / EXTREME)
 //   - Slope: rising VIX = increasing fear, falling VIX = complacency building
 //   - Intraday change: measures today's VIX movement vs open
@@ -852,8 +859,8 @@ if i_showDash and barstate.islast
     int r = 0
 
     // Header
-    table.cell(dash, 0, r, "SPX INTRADAY",  text_color=C_DASH_HEADER, text_size=tblSize, text_halign=text.align_left)
-    table.cell(dash, 1, r, str.tostring(tfMinutes, "#") + "m",
+    table.cell(dash, 0, r, "IDX INTRADAY",  text_color=C_DASH_HEADER, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, syminfo.ticker + " " + str.tostring(tfMinutes, "#") + "m",
          text_color=C_DASH_HEADER, text_size=tblSize, text_halign=text.align_right)
     r += 1
 
@@ -1012,20 +1019,20 @@ if i_showDash and barstate.islast
 // ============================================================================
 
 // Static alertcondition entries
-alertcondition(callsSignal, title="SPX CALLS Signal", message="SPX Intraday Analyst: CALLS signal fired")
-alertcondition(putsSignal,  title="SPX PUTS Signal",  message="SPX Intraday Analyst: PUTS signal fired")
-alertcondition(biasScore >= 7,  title="SPX Strong Bullish Bias", message="SPX bias score reached strong bullish territory")
-alertcondition(biasScore <= -7, title="SPX Strong Bearish Bias", message="SPX bias score reached strong bearish territory")
-alertcondition(i_useSqueeze and sqzState == "FIRED", title="SPX Squeeze Fired", message="SPX TTM Squeeze has fired")
+alertcondition(callsSignal, title="CALLS Signal", message="Index Intraday Analyst: CALLS signal fired")
+alertcondition(putsSignal,  title="PUTS Signal",  message="Index Intraday Analyst: PUTS signal fired")
+alertcondition(biasScore >= 7,  title="Strong Bullish Bias", message="Bias score reached strong bullish territory")
+alertcondition(biasScore <= -7, title="Strong Bearish Bias", message="Bias score reached strong bearish territory")
+alertcondition(i_useSqueeze and sqzState == "FIRED", title="Squeeze Fired", message="TTM Squeeze has fired")
 alertcondition(i_useVIX and not na(vixVal) and vixVal >= i_vixExtreme, title="VIX Extreme", message="VIX has reached extreme levels")
-alertcondition(i_useDivergence and divStr == "BULLISH",  title="SPX RSI Bull Divergence", message="SPX RSI bullish divergence detected")
-alertcondition(i_useDivergence and divStr == "BEARISH",  title="SPX RSI Bear Divergence", message="SPX RSI bearish divergence detected")
-alertcondition(isRTH and not na(sessionHigh) and high >= sessionHigh and high > high[1], title="SPX New HOD", message="SPX printed a new session high")
-alertcondition(isRTH and not na(sessionLow) and low <= sessionLow and low < low[1],      title="SPX New LOD", message="SPX printed a new session low")
+alertcondition(i_useDivergence and divStr == "BULLISH",  title="RSI Bull Divergence", message="RSI bullish divergence detected")
+alertcondition(i_useDivergence and divStr == "BEARISH",  title="RSI Bear Divergence", message="RSI bearish divergence detected")
+alertcondition(isRTH and not na(sessionHigh) and high >= sessionHigh and high > high[1], title="New HOD", message="New session high")
+alertcondition(isRTH and not na(sessionLow) and low <= sessionLow and low < low[1],      title="New LOD", message="New session low")
 
 // Dynamic alerts with context
 if callsSignal
-    alert("SPX CALLS | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
+    alert("CALLS " + syminfo.ticker + " | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
           " | Regime: " + regimeStr +
           " | ATR: " + atrRegime +
           (i_useVIX and not na(vixVal) ? " | VIX: " + f2(vixVal) + " " + (na(vixTier) ? "" : vixTier) : "") +
@@ -1033,7 +1040,7 @@ if callsSignal
           alert.freq_once_per_bar_close)
 
 if putsSignal
-    alert("SPX PUTS | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
+    alert("PUTS " + syminfo.ticker + " | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
           " | Regime: " + regimeStr +
           " | ATR: " + atrRegime +
           (i_useVIX and not na(vixVal) ? " | VIX: " + f2(vixVal) + " " + (na(vixTier) ? "" : vixTier) : "") +
