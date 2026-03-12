@@ -1,0 +1,1045 @@
+// ============================================================================
+// SPX Intraday Analyst
+// Timeframe: 1-minute, 5-minute, 10-minute, 15-minute (adaptive)
+// Version: 1.0.0
+// Author: Chris Thomas
+// ============================================================================
+// Purpose-built intraday overlay for SPX (S&P 500 Cash Index from CBOE).
+//
+// SPX has NO volume data on TradingView. This indicator is architected
+// around that constraint — every component is price-derived or pulled from
+// external symbols (VIX, NYSE TICK). Volume-dependent tools (VWAP, OBV,
+// relative volume, footprint) are replaced with:
+//
+//   - Session-anchored TWAP (time-weighted average price) with std dev bands
+//   - VIX context module (fear gauge, slope, intraday change)
+//   - Enhanced price-momentum stack (RSI, MACD, ADX/DMI, Stochastic)
+//   - TTM Squeeze (BB/KC compression — pure price + ATR)
+//   - NYSE TICK breadth integration
+//
+// Timeframe-adaptive: auto-detects chart TF and adjusts opening range
+// duration, ATR lookbacks, divergence sensitivity, and session bar math.
+//
+// Components:
+//   - Multi-EMA ribbon (configurable) + HTF anchor EMA
+//   - Session-anchored TWAP with standard deviation bands
+//   - VIX integration (level, slope, intraday % change)
+//   - RSI with pivot-based divergence detection
+//   - MACD momentum
+//   - ADX / DMI trend strength + slope
+//   - TTM Squeeze (BB inside KC)
+//   - Stochastic K/D (fast momentum confirmation)
+//   - NYSE TICK breadth (6-tier classification)
+//   - ATR regime (percentile-ranked)
+//   - BB width percentile (compression detection)
+//   - Session levels: Prior Day H/L/C, Opening Range, HOD/LOD
+//   - Pre-Market High/Low
+//   - Session phase detection (6 phases)
+//   - Weighted scoring engine (-13 to +13)
+//   - Signal generation (CALLS / PUTS) with cooldown
+//   - Regime classifier (BULLISH / BEARISH / RANGING / NO TRADE)
+//   - 24-row heads-up dashboard
+//   - Dual alert system
+// ============================================================================
+
+// ============================================================================
+// TradingView Pine Script v6
+// ============================================================================
+//@version=6
+indicator(
+     title          = "SPX Intraday Analyst",
+     shorttitle     = "SPX-IA",
+     overlay        = true,
+     max_labels_count  = 500,
+     max_lines_count   = 500,
+     max_boxes_count   = 200,
+     max_bars_back     = 5000
+ )
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+var string GP_EMA      = "EMA Ribbon"
+var string GP_TWAP     = "Session TWAP"
+var string GP_RSI      = "RSI"
+var string GP_MACD     = "MACD"
+var string GP_ADX      = "ADX / DMI"
+var string GP_STOCH    = "Stochastic"
+var string GP_ATR      = "ATR / Volatility"
+var string GP_SQUEEZE  = "TTM Squeeze"
+var string GP_TICK     = "NYSE TICK"
+var string GP_VIX      = "VIX Context"
+var string GP_LEVELS   = "Key Levels"
+var string GP_SESSION  = "Session & Time"
+var string GP_SIGNALS  = "Signal Logic"
+var string GP_HTF      = "Higher Timeframe"
+var string GP_DIV      = "RSI Divergence"
+var string GP_DASH     = "Dashboard"
+
+// Colors — vibrant, dark-theme optimized
+var color C_BULL         = #00E676
+var color C_BEAR         = #FF1744
+var color C_NEUTRAL      = #B0BEC5
+var color C_YELLOW       = #FFD600
+var color C_ORANGE       = #FF9100
+var color C_CYAN         = #00BCD4
+var color C_PURPLE       = #7C4DFF
+var color C_GRAY         = #616161
+var color C_WHITE        = #FFFFFF
+
+var color C_EMA_FAST     = #FFD600
+var color C_EMA_MID      = #FF9100
+var color C_EMA_SLOW     = #FF1744
+var color C_EMA_ANCHOR   = #7C4DFF
+var color C_CLOUD_BULL   = color.new(#00E676, 85)
+var color C_CLOUD_BEAR   = color.new(#FF1744, 85)
+var color C_CLOUD_MIXED  = color.new(#FFD600, 90)
+
+var color C_TWAP         = #FFFFFF
+var color C_TWAP_BAND    = #00BCD4
+
+var color C_PM_HIGH      = #FF5252
+var color C_PM_LOW       = #69F0AE
+var color C_PDH          = #FF6E40
+var color C_PDL          = #64FFDA
+var color C_PDC          = #B0BEC5
+var color C_OR_HIGH      = #E040FB
+var color C_OR_LOW       = #B388FF
+var color C_HOD          = #00E676
+var color C_LOD          = #FF1744
+
+var color C_CALLS        = #00E676
+var color C_PUTS         = #FF1744
+var color C_BG_CALLS     = color.new(#00E676, 92)
+var color C_BG_PUTS      = color.new(#FF1744, 92)
+var color C_BG_BIAS_BULL = color.new(#00E676, 96)
+var color C_BG_BIAS_BEAR = color.new(#FF1744, 96)
+
+var color C_DASH_BG      = color.new(#1A1A2E, 5)
+var color C_DASH_HEADER  = #7C4DFF
+var color C_DASH_TEXT     = #E0E0E0
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Format float to 2 decimal places
+f2(float v) => str.tostring(v, "#.##")
+
+// Positive/negative color
+posnegColor(float v) => v > 0 ? C_BULL : v < 0 ? C_BEAR : C_NEUTRAL
+
+// Session detection helper
+inSession(string sess, string tz) => not na(time(timeframe.period, sess, tz))
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// --- EMA Ribbon ---
+i_emaFastLen   = input.int(9,     "Fast EMA Length",         minval=2,  group=GP_EMA)
+i_emaMidLen    = input.int(21,    "Mid EMA Length",          minval=2,  group=GP_EMA)
+i_emaSlowLen   = input.int(50,    "Slow EMA Length",         minval=2,  group=GP_EMA)
+i_showCloud    = input.bool(true, "Show EMA Cloud",                     group=GP_EMA)
+
+// --- Session TWAP ---
+i_showTWAP     = input.bool(true,  "Show Session TWAP",                group=GP_TWAP)
+i_twapBandMult = input.float(1.5,  "TWAP Band Multiplier (Std Dev)",   minval=0.5, maxval=3.0, step=0.1, group=GP_TWAP,
+                   tooltip="Standard deviation multiplier for TWAP bands. Similar to VWAP bands but time-weighted since SPX has no volume.")
+
+// --- RSI ---
+i_rsiLen       = input.int(14,    "RSI Length",              minval=2,  group=GP_RSI)
+i_rsiOB        = input.int(70,    "RSI Overbought",         minval=60, maxval=90, group=GP_RSI)
+i_rsiOS        = input.int(30,    "RSI Oversold",           minval=10, maxval=40, group=GP_RSI)
+
+// --- MACD ---
+i_macdFast     = input.int(12,    "MACD Fast Length",        minval=2,  group=GP_MACD)
+i_macdSlow     = input.int(26,    "MACD Slow Length",        minval=2,  group=GP_MACD)
+i_macdSignal   = input.int(9,     "MACD Signal Length",      minval=2,  group=GP_MACD)
+
+// --- ADX / DMI ---
+i_adxLen       = input.int(14,    "ADX Length",              minval=2,  group=GP_ADX)
+i_adxNoTrend   = input.int(18,    "ADX No-Trend Threshold",  minval=10, maxval=30, group=GP_ADX)
+
+// --- Stochastic ---
+i_stochK       = input.int(14,    "Stochastic K",            minval=2,  group=GP_STOCH)
+i_stochD       = input.int(3,     "Stochastic D (Smoothing)", minval=1, group=GP_STOCH)
+i_stochSmooth  = input.int(3,     "Stochastic K Smoothing",  minval=1,  group=GP_STOCH)
+
+// --- ATR / Volatility ---
+i_atrLen       = input.int(14,    "ATR Length",              minval=2,  group=GP_ATR)
+i_atrPctlLB    = input.int(0,     "ATR Percentile Lookback (0 = auto)", minval=0, group=GP_ATR,
+                   tooltip="Auto-adapts based on timeframe: 1m=390, 5m=200, 10m=150, 15m=100 bars.")
+i_bbLen        = input.int(20,    "BB Length",               minval=5,  group=GP_ATR)
+i_bbMult       = input.float(2.0, "BB Multiplier",           minval=1.0, maxval=3.0, step=0.1, group=GP_ATR)
+i_bbwPctlLB    = input.int(0,     "BB Width Pctl Lookback (0 = auto)", minval=0, group=GP_ATR)
+
+// --- TTM Squeeze ---
+i_useSqueeze   = input.bool(true,  "Enable TTM Squeeze",               group=GP_SQUEEZE)
+i_sqzBBLen     = input.int(20,     "Squeeze BB Length",      minval=5,  group=GP_SQUEEZE)
+i_sqzBBMult    = input.float(2.0,  "Squeeze BB Multiplier",  minval=1.0, maxval=3.0, step=0.1, group=GP_SQUEEZE)
+i_sqzKCLen     = input.int(20,     "Squeeze KC Length",      minval=5,  group=GP_SQUEEZE)
+i_sqzKCMult    = input.float(1.5,  "Squeeze KC Multiplier",  minval=0.5, maxval=3.0, step=0.1, group=GP_SQUEEZE)
+
+// --- NYSE TICK ---
+i_useTick      = input.bool(true,      "Enable NYSE TICK",                 group=GP_TICK)
+i_tickSymbol   = input.string("USI:TICK", "TICK Symbol",                   group=GP_TICK)
+i_tickBull     = input.int(500,        "TICK Bullish Threshold",  minval=100, group=GP_TICK)
+i_tickBear     = input.int(-500,       "TICK Bearish Threshold",  maxval=-100, group=GP_TICK)
+i_tickExtreme  = input.int(1000,       "TICK Extreme Threshold",  minval=500, group=GP_TICK)
+
+// --- VIX Context ---
+i_useVIX       = input.bool(true,      "Enable VIX Context",               group=GP_VIX)
+i_vixSymbol    = input.string("CBOE:VIX", "VIX Symbol",                    group=GP_VIX)
+i_vixLow       = input.float(15.0,     "VIX Low Threshold",     minval=5,  step=1, group=GP_VIX)
+i_vixElevated  = input.float(20.0,     "VIX Elevated Threshold", minval=10, step=1, group=GP_VIX)
+i_vixHigh      = input.float(25.0,     "VIX High Threshold",    minval=15, step=1, group=GP_VIX)
+i_vixExtreme   = input.float(30.0,     "VIX Extreme Threshold", minval=20, step=1, group=GP_VIX)
+i_vixSlopeLen  = input.int(5,          "VIX Slope Lookback",    minval=2,  group=GP_VIX)
+
+// --- Key Levels ---
+i_showPMHL     = input.bool(true, "Show Pre-Market High / Low",         group=GP_LEVELS)
+i_showPDHLC    = input.bool(true, "Show Prior Day H / L / C",           group=GP_LEVELS)
+i_showOR       = input.bool(true, "Show Opening Range",                 group=GP_LEVELS)
+i_orMinutes    = input.int(0,     "Opening Range Minutes (0 = auto)",   minval=0, maxval=60, group=GP_LEVELS,
+                   tooltip="Auto: 1m=5min, 5m=15min, 10m=20min, 15m=30min.")
+i_showHODLOD   = input.bool(true, "Show Session HOD / LOD",             group=GP_LEVELS)
+
+// --- Session & Time ---
+i_pmSession    = input.session("0400-0930", "Pre-Market Session",       group=GP_SESSION)
+i_rthSession   = input.session("0930-1600", "Regular Trading Hours",    group=GP_SESSION)
+i_tz           = input.string("America/New_York", "Timezone",           group=GP_SESSION,
+                   options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
+
+// --- Signal Logic ---
+i_showSignals  = input.bool(true,  "Show CALLS / PUTS Signals",        group=GP_SIGNALS)
+i_cooldownBars = input.int(0,      "Signal Cooldown Bars (0 = auto)",   minval=0, maxval=20, group=GP_SIGNALS,
+                   tooltip="Auto: 1m=5, 5m=3, 10m=2, 15m=2.")
+i_signalStart  = input.session("0945-1545", "Signal Time Window",      group=GP_SIGNALS)
+i_requireADX   = input.bool(true,  "Require ADX Above No-Trend",       group=GP_SIGNALS)
+i_useWeighted  = input.bool(true,  "Use Weighted Scoring (2x/1x)",     group=GP_SIGNALS,
+                   tooltip="Structural conditions (EMA, TWAP, Anchor) score 2x. Confirmation (RSI, MACD, ADX, TICK, VIX, Squeeze, Stochastic) score 1x. Weighted max: +/-13. Equal max: +/-10.")
+i_minScore     = input.int(6,      "Minimum Signal Score",             minval=2, maxval=14, group=GP_SIGNALS)
+i_twapExtFilter = input.float(2.5, "Max TWAP Distance (ATR multiples)", minval=0.5, maxval=5.0, step=0.25, group=GP_SIGNALS)
+i_showBgTint   = input.bool(false, "Show Directional Background Tint", group=GP_SIGNALS)
+i_bgThreshold  = input.int(5,     "Background Tint Threshold",         minval=2, maxval=13, group=GP_SIGNALS)
+
+// --- Higher Timeframe ---
+i_useHTF       = input.bool(true,  "Enable HTF Anchor EMA",            group=GP_HTF)
+i_htfTF        = input.string("",  "HTF Timeframe (blank = auto)",     group=GP_HTF,
+                   tooltip="Auto: 1m→5m, 5m→15m, 10m→30m, 15m→60m.")
+i_htfEmaLen    = input.int(50,     "HTF Anchor EMA Length",            minval=10, group=GP_HTF)
+
+// --- RSI Divergence ---
+i_useDivergence = input.bool(true, "Enable RSI Divergence Detection",  group=GP_DIV)
+i_divPivotLeft  = input.int(0,     "Pivot Left Bars (0 = auto)",       minval=0, maxval=10, group=GP_DIV,
+                    tooltip="Auto: 1m=5, 5m=4, 10m=3, 15m=3.")
+i_divPivotRight = input.int(0,     "Pivot Right Bars (0 = auto)",      minval=0, maxval=10, group=GP_DIV)
+i_divLookback   = input.int(0,     "Divergence Lookback (0 = auto)",   minval=0, maxval=50, group=GP_DIV,
+                    tooltip="Auto: 1m=30, 5m=20, 10m=15, 15m=10.")
+
+// --- Dashboard ---
+i_showDash     = input.bool(true,    "Show Dashboard",                 group=GP_DASH)
+i_dashPos      = input.string("Bottom Right", "Dashboard Position",       group=GP_DASH,
+                   options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+i_dashSize     = input.string("Small", "Dashboard Size",               group=GP_DASH,
+                   options=["Tiny", "Small", "Normal"])
+
+// ============================================================================
+// TIMEFRAME ADAPTATION
+// ============================================================================
+// Auto-detect timeframe and set adaptive defaults for parameters left at 0.
+
+float tfMinutes = timeframe.in_seconds() / 60.0
+bool  intradayChart = timeframe.isintraday
+
+// Adaptive Opening Range (minutes)
+int orMinutesAdapt = i_orMinutes > 0 ? i_orMinutes : tfMinutes <= 1 ? 5 : tfMinutes <= 5 ? 15 : tfMinutes <= 10 ? 20 : 30
+
+// Adaptive signal cooldown (bars)
+int cooldownAdapt = i_cooldownBars > 0 ? i_cooldownBars : tfMinutes <= 1 ? 5 : tfMinutes <= 5 ? 3 : tfMinutes <= 10 ? 2 : 2
+
+// Adaptive ATR percentile lookback
+int atrPctlAdapt = i_atrPctlLB > 0 ? i_atrPctlLB : tfMinutes <= 1 ? 390 : tfMinutes <= 5 ? 200 : tfMinutes <= 10 ? 150 : 100
+
+// Adaptive BB width percentile lookback
+int bbwPctlAdapt = i_bbwPctlLB > 0 ? i_bbwPctlLB : tfMinutes <= 1 ? 390 : tfMinutes <= 5 ? 200 : tfMinutes <= 10 ? 150 : 100
+
+// Adaptive divergence params
+int divPL = i_divPivotLeft > 0 ? i_divPivotLeft : tfMinutes <= 1 ? 5 : tfMinutes <= 5 ? 4 : tfMinutes <= 10 ? 3 : 3
+
+int divPR = i_divPivotRight > 0 ? i_divPivotRight : tfMinutes <= 1 ? 3 : tfMinutes <= 5 ? 2 : tfMinutes <= 10 ? 2 : 2
+
+int divLB = i_divLookback > 0 ? i_divLookback : tfMinutes <= 1 ? 30 : tfMinutes <= 5 ? 20 : tfMinutes <= 10 ? 15 : 10
+
+// Adaptive HTF timeframe
+string htfTF = i_htfTF != "" ? i_htfTF : tfMinutes <= 1 ? "5" : tfMinutes <= 5 ? "15" : tfMinutes <= 10 ? "30" : "60"
+
+// ============================================================================
+// EMA RIBBON
+// ============================================================================
+float emaFast = ta.ema(close, i_emaFastLen)
+float emaMid  = ta.ema(close, i_emaMidLen)
+float emaSlow = ta.ema(close, i_emaSlowLen)
+
+bool emaBullish = emaFast > emaMid and emaMid > emaSlow
+bool emaBearish = emaFast < emaMid and emaMid < emaSlow
+
+color cloudColor = emaBullish ? C_CLOUD_BULL : emaBearish ? C_CLOUD_BEAR : C_CLOUD_MIXED
+
+plot(emaFast, "Fast EMA",  C_EMA_FAST, 1)
+plot(emaMid,  "Mid EMA",   C_EMA_MID,  1)
+plot(emaSlow, "Slow EMA",  C_EMA_SLOW, 2)
+
+pFastFill = plot(i_showCloud ? emaFast : na, "Cloud Fast", display=display.none)
+pSlowFill = plot(i_showCloud ? emaSlow : na, "Cloud Slow", display=display.none)
+fill(pFastFill, pSlowFill, cloudColor, "EMA Cloud")
+
+// 50 EMA slope
+float emaSlope    = emaSlow - emaSlow[5]
+bool  emaSlopePos = emaSlope > 0
+bool  emaSlopeNeg = emaSlope < 0
+
+// ============================================================================
+// HTF ANCHOR EMA
+// ============================================================================
+float htfAnchorEma = i_useHTF ? request.security(syminfo.tickerid, htfTF, ta.ema(close, i_htfEmaLen), lookahead=barmerge.lookahead_off) : na
+
+plot(i_useHTF and not na(htfAnchorEma) ? htfAnchorEma : na, "HTF Anchor EMA",
+     C_EMA_ANCHOR, 3, plot.style_stepline)
+
+// ============================================================================
+// SESSION-ANCHORED TWAP (VWAP SUBSTITUTE)
+// ============================================================================
+// Since SPX has no volume data, we compute a Time-Weighted Average Price:
+// running mean of typical price (HLC/3) anchored to the session start,
+// with standard deviation bands. This serves the same structural role as
+// VWAP — a session fair-value reference — but uses equal time weighting
+// instead of volume weighting.
+
+bool newSession = inSession(i_rthSession, i_tz) and not inSession(i_rthSession, i_tz)[1]
+
+var float twapSum     = 0.0
+var float twapSumSq   = 0.0
+var int   twapCount   = 0
+var float twapVal     = na
+var float twapStdDev  = na
+
+float typicalPrice = hlc3
+
+if newSession
+    twapSum   := typicalPrice
+    twapSumSq := typicalPrice * typicalPrice
+    twapCount := 1
+    twapVal   := typicalPrice
+    twapStdDev := 0.0
+else if inSession(i_rthSession, i_tz)
+    twapCount += 1
+    twapSum   += typicalPrice
+    twapSumSq += typicalPrice * typicalPrice
+    twapVal   := twapSum / twapCount
+    float variance = twapCount > 1 ? (twapSumSq / twapCount) - (twapVal * twapVal) : 0.0
+    twapStdDev := math.sqrt(math.max(variance, 0.0))
+
+float twapUpper = not na(twapVal) ? twapVal + i_twapBandMult * nz(twapStdDev) : na
+float twapLower = not na(twapVal) ? twapVal - i_twapBandMult * nz(twapStdDev) : na
+
+plot(i_showTWAP and intradayChart and not na(twapVal) ? twapVal : na, "TWAP",
+     C_TWAP, 2, plot.style_line)
+plot(i_showTWAP and intradayChart and not na(twapUpper) ? twapUpper : na, "TWAP Upper",
+     C_TWAP_BAND, 1, plot.style_line)
+plot(i_showTWAP and intradayChart and not na(twapLower) ? twapLower : na, "TWAP Lower",
+     C_TWAP_BAND, 1, plot.style_line)
+
+// ============================================================================
+// RSI
+// ============================================================================
+float rsiVal = ta.rsi(close, i_rsiLen)
+
+// ============================================================================
+// MACD
+// ============================================================================
+[macdLine, macdSignalLine, macdHist] = ta.macd(close, i_macdFast, i_macdSlow, i_macdSignal)
+bool macdAboveSignal = macdLine > macdSignalLine
+
+// ============================================================================
+// ADX / DMI
+// ============================================================================
+[diPlus, diMinus, adxVal] = ta.dmi(i_adxLen, i_adxLen)
+
+// ADX slope
+float adxSlope = adxVal - nz(adxVal[5])
+string adxSlopeStr = adxSlope > 1 ? "RISING" : adxSlope < -1 ? "FALLING" : "FLAT"
+color  adxSlopeClr = adxSlope > 1 ? C_BULL : adxSlope < -1 ? C_BEAR : C_NEUTRAL
+
+// ADX tier
+string adxTier = adxVal > 45 ? "EXTREME" : adxVal > 30 ? "STRONG" : adxVal > 20 ? "MODERATE" : "WEAK"
+color  adxTierClr = adxVal > 45 ? C_ORANGE : adxVal > 30 ? C_BULL : adxVal > 20 ? C_YELLOW : C_GRAY
+
+// ============================================================================
+// STOCHASTIC
+// ============================================================================
+float stochK = ta.sma(ta.stoch(close, high, low, i_stochK), i_stochSmooth)
+float stochD = ta.sma(stochK, i_stochD)
+
+// ============================================================================
+// ATR + REGIME
+// ============================================================================
+float atrVal = ta.atr(i_atrLen)
+
+int atrRank = 0
+for i = 1 to atrPctlAdapt
+    if atrVal > nz(atrVal[i])
+        atrRank += 1
+
+float atrPctl = atrPctlAdapt > 0 ? atrRank / float(atrPctlAdapt) * 100 : 50.0
+
+string atrRegime = atrPctl >= 90 ? "EXTREME" : atrPctl >= 70 ? "HIGH" : atrPctl >= 30 ? "NORMAL" : "LOW"
+color  atrClr    = atrPctl >= 90 ? C_ORANGE : atrPctl >= 70 ? C_YELLOW : atrPctl >= 30 ? C_NEUTRAL : C_CYAN
+
+// ============================================================================
+// BOLLINGER BAND WIDTH PERCENTILE
+// ============================================================================
+[bbMid, bbUp, bbLow] = ta.bb(close, i_bbLen, i_bbMult)
+float bbWidth = bbMid != 0 ? (bbUp - bbLow) / bbMid * 100 : 0.0
+
+int bbwRank = 0
+for i = 1 to bbwPctlAdapt
+    if bbWidth > nz(bbWidth[i])
+        bbwRank += 1
+
+float bbwPctl = bbwPctlAdapt > 0 ? bbwRank / float(bbwPctlAdapt) * 100 : 50.0
+
+string bbwStr = bbwPctl < 10 ? "COMPRESSED" : bbwPctl < 30 ? "NARROW" : bbwPctl > 90 ? "EXPANDED" : bbwPctl > 70 ? "WIDE" : "NORMAL"
+color  bbwClr = bbwPctl < 10 ? C_CYAN : bbwPctl < 30 ? color.new(C_CYAN, 40) : bbwPctl > 90 ? C_ORANGE : bbwPctl > 70 ? C_YELLOW : C_NEUTRAL
+
+// ============================================================================
+// TTM SQUEEZE
+// ============================================================================
+float sqzBBUpper = 0.0
+float sqzBBLower = 0.0
+float sqzKCUpper = 0.0
+float sqzKCLower = 0.0
+string sqzState  = "OFF"
+color  sqzClr    = C_GRAY
+float  sqzMom    = 0.0
+
+if i_useSqueeze
+    sqzBBUpper := ta.sma(close, i_sqzBBLen) + i_sqzBBMult * ta.stdev(close, i_sqzBBLen)
+    sqzBBLower := ta.sma(close, i_sqzBBLen) - i_sqzBBMult * ta.stdev(close, i_sqzBBLen)
+    sqzKCUpper := ta.ema(close, i_sqzKCLen) + i_sqzKCMult * ta.atr(i_sqzKCLen)
+    sqzKCLower := ta.ema(close, i_sqzKCLen) - i_sqzKCMult * ta.atr(i_sqzKCLen)
+
+    bool sqzOn     = sqzBBLower > sqzKCLower and sqzBBUpper < sqzKCUpper
+    bool sqzOnPrev = nz(sqzBBLower[1]) > nz(sqzKCLower[1]) and nz(sqzBBUpper[1]) < nz(sqzKCUpper[1])
+
+    sqzState := sqzOn ? "SQUEEZE ON" : (not sqzOn and sqzOnPrev) ? "FIRED" : "OFF"
+    sqzClr   := sqzState == "SQUEEZE ON" ? C_ORANGE : sqzState == "FIRED" ? C_BULL : C_GRAY
+
+    // Squeeze momentum: linear regression of close vs BB midline deviation
+    sqzMom := ta.linreg(close - ta.sma(close, i_sqzBBLen), i_sqzBBLen, 0)
+
+// ============================================================================
+// NYSE TICK INDEX
+// ============================================================================
+float tickVal    = i_useTick ? request.security(i_tickSymbol, "1", close, lookahead=barmerge.lookahead_off) : na
+float tickSMA    = i_useTick and not na(tickVal) ? request.security(i_tickSymbol, "1", ta.sma(close, 5), lookahead=barmerge.lookahead_off) : na
+
+string tickStr = na
+color  tickClr = C_GRAY
+
+if i_useTick and not na(tickSMA)
+    if tickSMA > i_tickExtreme
+        tickStr := "EXTREME BULL"
+        tickClr := C_BULL
+    else if tickSMA > i_tickBull
+        tickStr := "BULLISH"
+        tickClr := color.new(C_BULL, 30)
+    else if tickSMA > 200
+        tickStr := "LEAN BULL"
+        tickClr := color.new(C_BULL, 60)
+    else if tickSMA < -i_tickExtreme
+        tickStr := "EXTREME BEAR"
+        tickClr := C_BEAR
+    else if tickSMA < i_tickBear
+        tickStr := "BEARISH"
+        tickClr := color.new(C_BEAR, 30)
+    else if tickSMA < -200
+        tickStr := "LEAN BEAR"
+        tickClr := color.new(C_BEAR, 60)
+    else
+        tickStr := "NEUTRAL"
+        tickClr := C_NEUTRAL
+else if i_useTick
+    tickStr := "N/A"
+
+// ============================================================================
+// VIX CONTEXT MODULE
+// ============================================================================
+// VIX is the implied volatility of SPX options — the market's real-time
+// fear gauge. Provides context that raw price action cannot:
+//   - Level: current VIX tier (LOW / NORMAL / ELEVATED / HIGH / EXTREME)
+//   - Slope: rising VIX = increasing fear, falling VIX = complacency building
+//   - Intraday change: measures today's VIX movement vs open
+//   - Scoring: low/declining VIX is bullish context, high/rising is bearish
+
+float vixVal   = i_useVIX ? request.security(i_vixSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off) : na
+float vixOpen  = i_useVIX ? request.security(i_vixSymbol, "D", open, lookahead=barmerge.lookahead_off) : na
+float vixSlope = i_useVIX and not na(vixVal) ? vixVal - nz(vixVal[i_vixSlopeLen]) : na
+float vixChgPct = i_useVIX and not na(vixVal) and not na(vixOpen) and vixOpen != 0 ?
+     (vixVal - vixOpen) / vixOpen * 100 : na
+
+string vixTier = na
+color  vixClr  = C_GRAY
+
+if i_useVIX and not na(vixVal)
+    if vixVal >= i_vixExtreme
+        vixTier := "EXTREME"
+        vixClr  := C_BEAR
+    else if vixVal >= i_vixHigh
+        vixTier := "HIGH"
+        vixClr  := C_ORANGE
+    else if vixVal >= i_vixElevated
+        vixTier := "ELEVATED"
+        vixClr  := C_YELLOW
+    else if vixVal >= i_vixLow
+        vixTier := "NORMAL"
+        vixClr  := C_NEUTRAL
+    else
+        vixTier := "LOW"
+        vixClr  := C_BULL
+
+string vixSlopeStr = na
+color  vixSlopeClr = C_GRAY
+if i_useVIX and not na(vixSlope)
+    vixSlopeStr := vixSlope > 0.5 ? "RISING" : vixSlope < -0.5 ? "FALLING" : "FLAT"
+    vixSlopeClr := vixSlope > 0.5 ? C_BEAR : vixSlope < -0.5 ? C_BULL : C_NEUTRAL
+
+// ============================================================================
+// SESSION DETECTION & PHASE
+// ============================================================================
+bool isRTH  = inSession(i_rthSession, i_tz)
+bool isPM   = inSession(i_pmSession, i_tz)
+
+// Session phase detection (ET)
+int   hourET   = hour(time, i_tz)
+int   minuteET = minute(time, i_tz)
+float timeDecimal = hourET + minuteET / 60.0
+
+string sessionPhase = "PRE/POST"
+color  phaseClr     = C_GRAY
+
+if isRTH
+    if timeDecimal < 10.0
+        sessionPhase := "OPEN DRIVE"
+        phaseClr     := C_ORANGE
+    else if timeDecimal < 11.5
+        sessionPhase := "MORNING"
+        phaseClr     := C_BULL
+    else if timeDecimal < 14.0
+        sessionPhase := "MIDDAY"
+        phaseClr     := C_GRAY
+    else if timeDecimal < 15.5
+        sessionPhase := "POWER HOUR"
+        phaseClr     := C_CYAN
+    else
+        sessionPhase := "CLOSE"
+        phaseClr     := C_YELLOW
+
+// ============================================================================
+// KEY LEVELS
+// ============================================================================
+
+// --- Pre-Market High / Low ---
+var float pmHigh = na
+var float pmLow  = na
+
+if isPM
+    if na(pmHigh) or not isPM[1]
+        pmHigh := high
+        pmLow  := low
+    else
+        pmHigh := math.max(pmHigh, high)
+        pmLow  := math.min(pmLow, low)
+
+plot(i_showPMHL and isRTH and not na(pmHigh) ? pmHigh : na, "PM High",
+     C_PM_HIGH, 1, plot.style_linebr)
+plot(i_showPMHL and isRTH and not na(pmLow) ? pmLow : na, "PM Low",
+     C_PM_LOW, 1, plot.style_linebr)
+
+// --- Prior Day High / Low / Close ---
+float pdHigh  = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+float pdLow   = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+float pdClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+
+plot(i_showPDHLC and intradayChart and not na(pdHigh)  ? pdHigh  : na, "PDH",  C_PDH, 1, plot.style_stepline)
+plot(i_showPDHLC and intradayChart and not na(pdLow)   ? pdLow   : na, "PDL",  C_PDL, 1, plot.style_stepline)
+plot(i_showPDHLC and intradayChart and not na(pdClose) ? pdClose : na, "PDC",  C_PDC, 1, plot.style_stepline)
+
+// --- Opening Range ---
+var float orHigh     = na
+var float orLow      = na
+var bool  orComplete = false
+var int   orBarsCount = 0
+int   orBarsNeeded   = math.max(1, math.ceil(orMinutesAdapt / timeframe.multiplier))
+
+if newSession
+    orHigh      := high
+    orLow       := low
+    orComplete  := false
+    orBarsCount := 1
+else if isRTH and not orComplete
+    orBarsCount += 1
+    orHigh := math.max(nz(orHigh, high), high)
+    orLow  := math.min(nz(orLow, low), low)
+    if orBarsCount >= orBarsNeeded
+        orComplete := true
+
+plot(i_showOR and isRTH and orComplete and not na(orHigh) ? orHigh : na, "OR High",
+     C_OR_HIGH, 1, plot.style_linebr)
+plot(i_showOR and isRTH and orComplete and not na(orLow) ? orLow : na, "OR Low",
+     C_OR_LOW, 1, plot.style_linebr)
+
+// --- Session HOD / LOD ---
+var float sessionHigh = na
+var float sessionLow  = na
+
+if newSession
+    sessionHigh := high
+    sessionLow  := low
+else if isRTH
+    sessionHigh := math.max(nz(sessionHigh, high), high)
+    sessionLow  := math.min(nz(sessionLow, low), low)
+
+plot(i_showHODLOD and isRTH and not na(sessionHigh) ? sessionHigh : na, "Session HOD",
+     C_HOD, 1, plot.style_circles)
+plot(i_showHODLOD and isRTH and not na(sessionLow) ? sessionLow : na, "Session LOD",
+     C_LOD, 1, plot.style_circles)
+
+// HOD/LOD position for dashboard
+string hodlodPos = "MID"
+if isRTH and not na(sessionHigh) and not na(sessionLow)
+    float sessRange = sessionHigh - sessionLow
+    if sessRange > 0
+        float posInRange = (close - sessionLow) / sessRange
+        hodlodPos := posInRange > 0.95 ? "AT HOD" : posInRange < 0.05 ? "AT LOD" : posInRange > 0.7 ? "UPPER" : posInRange < 0.3 ? "LOWER" : "MID"
+
+// OR position
+string orPos = "N/A"
+if orComplete and not na(orHigh) and not na(orLow)
+    orPos := close > orHigh ? "ABOVE OR" : close < orLow ? "BELOW OR" : "IN OR"
+
+// ============================================================================
+// RSI DIVERGENCE DETECTION
+// ============================================================================
+var int   lastBullDivBar = 0
+var int   lastBearDivBar = 0
+string    divStr         = "NONE"
+color     divClr         = C_NEUTRAL
+
+// Pivot calls must be at global scope for consistent execution
+float pivLowPrice  = ta.pivotlow(low,    divPL, divPR)
+float pivHighPrice = ta.pivothigh(high,  divPL, divPR)
+float pivLowRSI    = ta.pivotlow(rsiVal, divPL, divPR)
+float pivHighRSI   = ta.pivothigh(rsiVal, divPL, divPR)
+
+// Store recent pivot values in persistent vars for lookback comparison
+var array<float> pivLowPriceHist  = array.new_float(0)
+var array<float> pivLowRSIHist    = array.new_float(0)
+var array<float> pivHighPriceHist = array.new_float(0)
+var array<float> pivHighRSIHist   = array.new_float(0)
+
+if not na(pivLowPrice) and not na(pivLowRSI)
+    array.unshift(pivLowPriceHist, pivLowPrice)
+    array.unshift(pivLowRSIHist, pivLowRSI)
+    if array.size(pivLowPriceHist) > 20
+        array.pop(pivLowPriceHist)
+        array.pop(pivLowRSIHist)
+
+if not na(pivHighPrice) and not na(pivHighRSI)
+    array.unshift(pivHighPriceHist, pivHighPrice)
+    array.unshift(pivHighRSIHist, pivHighRSI)
+    if array.size(pivHighPriceHist) > 20
+        array.pop(pivHighPriceHist)
+        array.pop(pivHighRSIHist)
+
+if i_useDivergence
+    // Bullish divergence: current pivot low is lower price but higher RSI than a prior pivot low
+    if not na(pivLowPrice) and not na(pivLowRSI) and array.size(pivLowPriceHist) > 1
+        for i = 1 to math.min(array.size(pivLowPriceHist) - 1, 10)
+            float prevPrice = array.get(pivLowPriceHist, i)
+            float prevRSI   = array.get(pivLowRSIHist, i)
+            if pivLowPrice < prevPrice and pivLowRSI > prevRSI
+                lastBullDivBar := bar_index
+                break
+
+    // Bearish divergence: current pivot high is higher price but lower RSI than a prior pivot high
+    if not na(pivHighPrice) and not na(pivHighRSI) and array.size(pivHighPriceHist) > 1
+        for i = 1 to math.min(array.size(pivHighPriceHist) - 1, 10)
+            float prevPrice = array.get(pivHighPriceHist, i)
+            float prevRSI   = array.get(pivHighRSIHist, i)
+            if pivHighPrice > prevPrice and pivHighRSI < prevRSI
+                lastBearDivBar := bar_index
+                break
+
+    // Recency check (within last N bars)
+    int divRecency = divLB * 2
+    bool recentBull = (bar_index - lastBullDivBar) <= divRecency and lastBullDivBar > 0
+    bool recentBear = (bar_index - lastBearDivBar) <= divRecency and lastBearDivBar > 0
+
+    divStr := recentBull and recentBear ? "BULL + BEAR" : recentBull ? "BULLISH" : recentBear ? "BEARISH" : "NONE"
+    divClr := recentBull and not recentBear ? C_BULL : recentBear and not recentBull ? C_BEAR : recentBull and recentBear ? C_YELLOW : C_NEUTRAL
+
+// ============================================================================
+// COMPOSITE SCORING ENGINE
+// ============================================================================
+// Weighted model: structural conditions at 2x, confirmation at 1x.
+// No volume-based conditions. Compensated with VIX context + Stochastic.
+//
+// STRUCTURAL (2x):
+//   1. EMA Stack (bullish/bearish alignment)
+//   2. Price vs Session TWAP
+//   3. Price vs HTF Anchor EMA
+//
+// CONFIRMATION (1x):
+//   4. ADX + DI direction (trend strength with directionality)
+//   5. RSI position (>55 bull, <45 bear)
+//   6. MACD vs signal line
+//   7. NYSE TICK breadth
+//   8. Squeeze momentum direction (when fired recently)
+//   9. VIX context (low/falling = bullish, high/rising = bearish)
+//  10. 50 EMA slope
+//
+// Weighted max: 3*2 + 7*1 = 13
+// Equal max: 10
+
+int wStructural = i_useWeighted ? 2 : 1
+int wConfirm    = 1
+int biasScore   = 0
+
+// --- Structural ---
+// 1. EMA Stack
+biasScore += emaBullish ? wStructural : emaBearish ? -wStructural : 0
+
+// 2. Price vs TWAP
+if intradayChart and not na(twapVal)
+    biasScore += close > twapVal ? wStructural : close < twapVal ? -wStructural : 0
+
+// 3. Price vs HTF Anchor
+if i_useHTF and not na(htfAnchorEma)
+    biasScore += close > htfAnchorEma ? wStructural : close < htfAnchorEma ? -wStructural : 0
+
+// --- Confirmation ---
+// 4. ADX + DI
+if adxVal > i_adxNoTrend
+    biasScore += diPlus > diMinus ? wConfirm : diMinus > diPlus ? -wConfirm : 0
+
+// 5. RSI
+biasScore += rsiVal > 55 ? wConfirm : rsiVal < 45 ? -wConfirm : 0
+
+// 6. MACD
+biasScore += macdAboveSignal ? wConfirm : -wConfirm
+
+// 7. TICK
+if i_useTick and not na(tickSMA)
+    biasScore += tickSMA > i_tickBull ? wConfirm : tickSMA < i_tickBear ? -wConfirm : 0
+
+// 8. Squeeze momentum (contribute when squeeze recently fired)
+if i_useSqueeze and (sqzState == "FIRED" or (sqzState == "OFF" and nz(sqzMom) != 0))
+    biasScore += sqzMom > 0 ? wConfirm : sqzMom < 0 ? -wConfirm : 0
+
+// 9. VIX context
+if i_useVIX and not na(vixVal) and not na(vixSlope)
+    // Low VIX + falling = bullish context; high VIX + rising = bearish context
+    bool vixBullish = vixVal < i_vixElevated and vixSlope < -0.3
+    bool vixBearish = vixVal > i_vixElevated and vixSlope > 0.3
+    biasScore += vixBullish ? wConfirm : vixBearish ? -wConfirm : 0
+
+// 10. 50 EMA slope
+biasScore += emaSlopePos ? wConfirm : emaSlopeNeg ? -wConfirm : 0
+
+// Score metadata
+int maxScore = 3 * wStructural + 7 * wConfirm
+
+float scoreAvg = ta.sma(biasScore, 5)
+string scoreTrend = biasScore > scoreAvg + 0.5 ? "IMPROVING" : biasScore < scoreAvg - 0.5 ? "FADING" : "STABLE"
+color  scoreTrendClr = scoreTrend == "IMPROVING" ? C_BULL : scoreTrend == "FADING" ? C_BEAR : C_NEUTRAL
+
+string biasLabel = biasScore >= 7 ? "STRONG BULL" : biasScore >= 4 ? "LEAN BULL" : biasScore >= 1 ? "WEAK BULL" : biasScore == 0 ? "NEUTRAL" : biasScore >= -3 ? "WEAK BEAR" : biasScore >= -6 ? "LEAN BEAR" : "STRONG BEAR"
+
+color biasClr = biasScore >= 7 ? C_BULL : biasScore >= 4 ? color.new(C_BULL, 30) : biasScore >= 1 ? color.new(C_BULL, 60) : biasScore == 0 ? C_NEUTRAL : biasScore >= -3 ? color.new(C_BEAR, 60) : biasScore >= -6 ? color.new(C_BEAR, 30) : C_BEAR
+
+// ============================================================================
+// REGIME CLASSIFIER
+// ============================================================================
+string regimeStr = "NO TRADE"
+color  regimeClr = C_GRAY
+
+bool twapBullish = intradayChart and not na(twapVal) ? close > twapVal : true
+bool twapBearish = intradayChart and not na(twapVal) ? close < twapVal : true
+
+if adxVal >= i_adxNoTrend and emaBullish and twapBullish
+    regimeStr := "BULLISH"
+    regimeClr := C_BULL
+else if adxVal >= i_adxNoTrend and emaBearish and twapBearish
+    regimeStr := "BEARISH"
+    regimeClr := C_BEAR
+else if adxVal >= i_adxNoTrend
+    regimeStr := "RANGING"
+    regimeClr := C_YELLOW
+// else stays NO TRADE
+
+// ============================================================================
+// SIGNAL ENGINE
+// ============================================================================
+// Uses the composite bias score with a minimum threshold.
+// Gated by barstate.isconfirmed for anti-repaint.
+
+var int lastSignalBar = 0
+
+bool inSignalWindow = inSession(i_signalStart, i_tz)
+bool cooldownOk     = (bar_index - lastSignalBar) >= cooldownAdapt
+bool adxOk          = not i_requireADX or adxVal >= i_adxNoTrend
+
+// TWAP distance filter: reject signals when price is extended beyond N * ATR from TWAP
+bool twapDistOk = true
+if intradayChart and not na(twapVal) and atrVal > 0
+    float twapDist = math.abs(close - twapVal) / atrVal
+    twapDistOk := twapDist <= i_twapExtFilter
+
+bool callsCondition = biasScore >= i_minScore and inSignalWindow and cooldownOk and adxOk and twapDistOk
+bool putsCondition  = biasScore <= -i_minScore and inSignalWindow and cooldownOk and adxOk and twapDistOk
+
+bool callsSignal = i_showSignals and barstate.isconfirmed and callsCondition
+bool putsSignal  = i_showSignals and barstate.isconfirmed and putsCondition
+
+if callsSignal or putsSignal
+    lastSignalBar := bar_index
+
+// Signal labels
+if callsSignal
+    label.new(bar_index, low, "CALLS",
+         style=label.style_label_up, color=C_CALLS, textcolor=color.white, size=size.small)
+
+if putsSignal
+    label.new(bar_index, high, "PUTS",
+         style=label.style_label_down, color=C_PUTS, textcolor=color.white, size=size.small)
+
+// Background tint
+bgcolor(i_showBgTint and biasScore >= i_bgThreshold ? C_BG_BIAS_BULL : i_showBgTint and biasScore <= -i_bgThreshold ? C_BG_BIAS_BEAR : na)
+
+// Signal background flash
+bgcolor(callsSignal ? C_BG_CALLS : putsSignal ? C_BG_PUTS : na)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+if i_showDash and barstate.islast
+    var table dash = table.new(
+         i_dashPos == "Top Right"    ? position.top_right    :
+         i_dashPos == "Top Left"     ? position.top_left     :
+         i_dashPos == "Bottom Right" ? position.bottom_right :
+         position.bottom_left,
+         columns = 2,
+         rows    = 25,
+         bgcolor = C_DASH_BG,
+         border_width = 1,
+         border_color = color.new(#FFFFFF, 85)
+     )
+
+    string tblSize = i_dashSize == "Tiny" ? size.tiny : i_dashSize == "Small" ? size.small : size.normal
+
+    int r = 0
+
+    // Header
+    table.cell(dash, 0, r, "SPX INTRADAY",  text_color=C_DASH_HEADER, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, str.tostring(tfMinutes, "#") + "m",
+         text_color=C_DASH_HEADER, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Regime
+    table.cell(dash, 0, r, "Regime",    text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, regimeStr,   text_color=regimeClr,   text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Bias Score
+    table.cell(dash, 0, r, "Bias",      text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, biasLabel + " (" + str.tostring(biasScore) + "/" + str.tostring(maxScore) + ")", text_color=biasClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Score Trend
+    table.cell(dash, 0, r, "Score Trend", text_color=C_DASH_TEXT,    text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, scoreTrend,    text_color=scoreTrendClr,  text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Session Phase
+    table.cell(dash, 0, r, "Phase",        text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, sessionPhase,   text_color=phaseClr,    text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // EMA Stack
+    string emaStr = emaBullish ? "BULLISH" : emaBearish ? "BEARISH" : "MIXED"
+    color  emaClr = emaBullish ? C_BULL : emaBearish ? C_BEAR : C_YELLOW
+    table.cell(dash, 0, r, "EMA Stack", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, emaStr,      text_color=emaClr,      text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // TWAP
+    if intradayChart and not na(twapVal)
+        string twapStr = close > twapVal ? "ABOVE" : close < twapVal ? "BELOW" : "AT"
+        color  twapColor = close > twapVal ? C_BULL : close < twapVal ? C_BEAR : C_NEUTRAL
+        table.cell(dash, 0, r, "TWAP",  text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, twapStr + " (" + f2(twapVal) + ")", text_color=twapColor, text_size=tblSize, text_halign=text.align_right)
+    else
+        table.cell(dash, 0, r, "TWAP",  text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, "N/A",   text_color=C_GRAY,      text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // HTF Anchor
+    if i_useHTF and not na(htfAnchorEma)
+        string htfStr = close > htfAnchorEma ? "ABOVE" : "BELOW"
+        color  htfClr2 = close > htfAnchorEma ? C_BULL : C_BEAR
+        table.cell(dash, 0, r, "HTF " + htfTF + "m EMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, htfStr + " (" + f2(htfAnchorEma) + ")", text_color=htfClr2, text_size=tblSize, text_halign=text.align_right)
+    else
+        table.cell(dash, 0, r, "HTF Anchor", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, i_useHTF ? "N/A" : "OFF", text_color=C_GRAY, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // ADX
+    table.cell(dash, 0, r, "ADX",       text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, f2(adxVal) + " " + adxTier, text_color=adxTierClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // ADX Slope
+    table.cell(dash, 0, r, "ADX Slope", text_color=C_DASH_TEXT,  text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, adxSlopeStr, text_color=adxSlopeClr,  text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // DI+/DI-
+    string diStr = "DI+ " + f2(diPlus) + " / DI- " + f2(diMinus)
+    color  diClr = diPlus > diMinus ? C_BULL : diMinus > diPlus ? C_BEAR : C_NEUTRAL
+    table.cell(dash, 0, r, "DI",        text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, diStr,       text_color=diClr,       text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // RSI
+    color rsiClr = rsiVal > i_rsiOB ? C_BEAR : rsiVal < i_rsiOS ? C_BULL : rsiVal > 55 ? color.new(C_BULL, 30) : rsiVal < 45 ? color.new(C_BEAR, 30) : C_NEUTRAL
+    string rsiState = rsiVal > i_rsiOB ? "OB" : rsiVal < i_rsiOS ? "OS" : ""
+    table.cell(dash, 0, r, "RSI",       text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, f2(rsiVal) + (rsiState != "" ? " " + rsiState : ""), text_color=rsiClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // RSI Divergence
+    if i_useDivergence
+        table.cell(dash, 0, r, "RSI Div", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, divStr,    text_color=divClr,      text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // MACD
+    string macdStr = macdAboveSignal ? "BULLISH" : "BEARISH"
+    color  macdClr = macdAboveSignal ? C_BULL : C_BEAR
+    table.cell(dash, 0, r, "MACD",      text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, macdStr + " (" + f2(macdHist) + ")", text_color=macdClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Stochastic
+    color stochClr = stochK > 80 ? C_BEAR : stochK < 20 ? C_BULL : stochK > stochD ? color.new(C_BULL, 30) : color.new(C_BEAR, 30)
+    string stochState = stochK > 80 ? " OB" : stochK < 20 ? " OS" : ""
+    table.cell(dash, 0, r, "Stoch K/D", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, f2(stochK) + " / " + f2(stochD) + stochState, text_color=stochClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // ATR
+    table.cell(dash, 0, r, "ATR",       text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, f2(atrVal) + " " + atrRegime + " (" + f2(atrPctl) + "%)", text_color=atrClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // BB Width
+    table.cell(dash, 0, r, "BB Width",  text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, bbwStr + " (" + f2(bbwPctl) + "%)", text_color=bbwClr, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // Squeeze
+    if i_useSqueeze
+        string sqzFull = sqzState + (sqzState != "OFF" ? " " + (sqzMom > 0 ? "+" : "") + f2(sqzMom) : "")
+        table.cell(dash, 0, r, "Squeeze", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, sqzFull,   text_color=sqzClr,      text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // TICK
+    if i_useTick
+        string tickFull = na(tickStr) ? "N/A" : tickStr + (not na(tickSMA) ? " (" + str.tostring(math.round(tickSMA)) + ")" : "")
+        table.cell(dash, 0, r, "TICK",   text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, tickFull, text_color=tickClr,     text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // VIX
+    if i_useVIX
+        if not na(vixVal)
+            table.cell(dash, 0, r, "VIX",       text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+            table.cell(dash, 1, r, f2(vixVal) + " " + (na(vixTier) ? "" : vixTier), text_color=vixClr, text_size=tblSize, text_halign=text.align_right)
+            r += 1
+            string vixSlopeFull = na(vixSlopeStr) ? "N/A" : vixSlopeStr + (not na(vixChgPct) ? " (" + (vixChgPct > 0 ? "+" : "") + f2(vixChgPct) + "%)" : "")
+            table.cell(dash, 0, r, "VIX Slope", text_color=C_DASH_TEXT,   text_size=tblSize, text_halign=text.align_left)
+            table.cell(dash, 1, r, vixSlopeFull, text_color=vixSlopeClr,  text_size=tblSize, text_halign=text.align_right)
+            r += 1
+        else
+            table.cell(dash, 0, r, "VIX",       text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+            table.cell(dash, 1, r, "N/A",       text_color=C_GRAY,     text_size=tblSize, text_halign=text.align_right)
+            r += 1
+
+    // HOD/LOD
+    if isRTH
+        table.cell(dash, 0, r, "HOD/LOD", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, hodlodPos, text_color=hodlodPos == "AT HOD" ? C_BULL : hodlodPos == "AT LOD" ? C_BEAR : C_NEUTRAL, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // OR Position
+    if orComplete
+        color orPosClr = orPos == "ABOVE OR" ? C_BULL : orPos == "BELOW OR" ? C_BEAR : C_YELLOW
+        table.cell(dash, 0, r, "OR",      text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 1, r, orPos,     text_color=orPosClr,    text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // Scoring mode
+    table.cell(dash, 0, r, "Score Mode", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 1, r, i_useWeighted ? "WEIGHTED" : "EQUAL", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Static alertcondition entries
+alertcondition(callsSignal, title="SPX CALLS Signal", message="SPX Intraday Analyst: CALLS signal fired")
+alertcondition(putsSignal,  title="SPX PUTS Signal",  message="SPX Intraday Analyst: PUTS signal fired")
+alertcondition(biasScore >= 7,  title="SPX Strong Bullish Bias", message="SPX bias score reached strong bullish territory")
+alertcondition(biasScore <= -7, title="SPX Strong Bearish Bias", message="SPX bias score reached strong bearish territory")
+alertcondition(i_useSqueeze and sqzState == "FIRED", title="SPX Squeeze Fired", message="SPX TTM Squeeze has fired")
+alertcondition(i_useVIX and not na(vixVal) and vixVal >= i_vixExtreme, title="VIX Extreme", message="VIX has reached extreme levels")
+alertcondition(i_useDivergence and divStr == "BULLISH",  title="SPX RSI Bull Divergence", message="SPX RSI bullish divergence detected")
+alertcondition(i_useDivergence and divStr == "BEARISH",  title="SPX RSI Bear Divergence", message="SPX RSI bearish divergence detected")
+alertcondition(isRTH and not na(sessionHigh) and high >= sessionHigh and high > high[1], title="SPX New HOD", message="SPX printed a new session high")
+alertcondition(isRTH and not na(sessionLow) and low <= sessionLow and low < low[1],      title="SPX New LOD", message="SPX printed a new session low")
+
+// Dynamic alerts with context
+if callsSignal
+    alert("SPX CALLS | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
+          " | Regime: " + regimeStr +
+          " | ATR: " + atrRegime +
+          (i_useVIX and not na(vixVal) ? " | VIX: " + f2(vixVal) + " " + (na(vixTier) ? "" : vixTier) : "") +
+          (i_useTick and not na(tickSMA) ? " | TICK: " + str.tostring(math.round(tickSMA)) : ""),
+          alert.freq_once_per_bar_close)
+
+if putsSignal
+    alert("SPX PUTS | Score: " + str.tostring(biasScore) + "/" + str.tostring(maxScore) +
+          " | Regime: " + regimeStr +
+          " | ATR: " + atrRegime +
+          (i_useVIX and not na(vixVal) ? " | VIX: " + f2(vixVal) + " " + (na(vixTier) ? "" : vixTier) : "") +
+          (i_useTick and not na(tickSMA) ? " | TICK: " + str.tostring(math.round(tickSMA)) : ""),
+          alert.freq_once_per_bar_close)
+
+// ============================================================================
+// END
+// ============================================================================
