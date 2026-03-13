@@ -317,7 +317,9 @@ float tickValue = i_useTick ? request.security(i_tickSymbol, "1", close, lookahe
 // VOLUME FOOTPRINT DATA
 // ============================================================================
 // Dashboard-only integration. No signal coupling.
-// request.footprint() counts toward the 40-call request.*() budget (+1 call).
+// request.footprint() counts toward the 40-call request.*() budget.
+// Total request.*() calls after tuple consolidation: 3
+//   1x "1" (TICK, same-TF), 1x "D" (daily tuple), 1x footprint
 
 footprint fpData = i_useFootprint ? request.footprint(i_fpTicksPerRow, i_fpVaPct) : na
 
@@ -379,10 +381,12 @@ if isPM
         pmHigh := math.max(pmHigh, high)
         pmLow  := math.min(pmLow, low)
 
-// --- Prior Day High / Low / Close ---
-float pdHigh  = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
-float pdLow   = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
-float pdClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+// --- Prior Day High / Low / Close + Current Day Open ---
+// Consolidated into a single request.security() tuple — 1 pass through daily data instead of 4
+[pdHigh, pdLow, pdClose, dayOpen] = request.security(
+     syminfo.tickerid, "D",
+     [high[1], low[1], close[1], open],
+     lookahead=barmerge.lookahead_on)
 
 // --- Opening Range ---
 var float orHigh     = na
@@ -680,8 +684,7 @@ var table dash = table.new(position.bottom_right, 3, 20,
      frame_width  = 1,
      frame_color  = color.new(#FFFFFF, 80))
 
-// Pre-fetch daily open for day change calculation (avoid calling inside if block)
-float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+// dayOpen already fetched in the consolidated daily tuple above
 float avgVol  = ta.sma(volume, 20)
 
 if barstate.islast and i_showDash

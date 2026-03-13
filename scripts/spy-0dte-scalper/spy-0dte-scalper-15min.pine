@@ -1,7 +1,7 @@
 // ============================================================================
 // SPY 0DTE Scalper
 // Timeframe: 15-minute
-// Version: 1.2.0
+// Version: 1.0.0
 // Author: Chris Thomas
 // ============================================================================
 // Purpose-built overlay for establishing directional bias and identifying
@@ -465,8 +465,10 @@ getDivColor() =>
 // NYSE TICK INDEX (SMA-smoothed for 15-min context)
 // ============================================================================
 
-float tickRaw    = i_useTick ? request.security(i_tickSymbol, "1", close,            lookahead=barmerge.lookahead_off) : na
-float tickSmooth = i_useTick ? request.security(i_tickSymbol, "1", ta.sma(close, 5), lookahead=barmerge.lookahead_off) : na
+// Consolidated into a single request.security() tuple — 1 pass through 1-min data instead of 2
+[_tickRaw, _tickSmooth] = request.security(i_tickSymbol, "1", [close, ta.sma(close, 5)], lookahead=barmerge.lookahead_off)
+float tickRaw    = i_useTick ? _tickRaw    : na
+float tickSmooth = i_useTick ? _tickSmooth : na
 
 // Use smoothed TICK for scoring, raw for dashboard display
 float tickValue = tickSmooth
@@ -475,7 +477,9 @@ float tickValue = tickSmooth
 // VOLUME FOOTPRINT DATA
 // ============================================================================
 // Full integration: scoring, level proximity, dashboard, POC/VA plots.
-// request.footprint() counts toward the 40-call request.*() budget (+1 call).
+// request.footprint() counts toward the 40-call request.*() budget.
+// Total request.*() calls after tuple consolidation: 4
+//   1x "1" (TICK tuple), 1x "5" (MTF tuple), 1x "D" (daily tuple), 1x footprint
 
 footprint fpData = i_useFootprint ? request.footprint(i_fpTicksPerRow, i_fpVaPct) : na
 
@@ -547,23 +551,20 @@ fpCumDeltaLabel() =>
 // MULTI-TIMEFRAME (5-MIN) DATA
 // ============================================================================
 
-// Pull 5-minute RSI
-float mtfRsi = request.security(syminfo.tickerid, "5", ta.rsi(close, i_mtfRsiLen), lookahead=barmerge.lookahead_off)
-
-// Pull 5-minute EMA trend alignment
-float mtfEmaFastVal = request.security(syminfo.tickerid, "5", ta.ema(close, i_mtfEmaFast), lookahead=barmerge.lookahead_off)
-float mtfEmaSlowVal = request.security(syminfo.tickerid, "5", ta.ema(close, i_mtfEmaSlow), lookahead=barmerge.lookahead_off)
-bool  mtfBullish    = mtfEmaFastVal > mtfEmaSlowVal
-bool  mtfBearish    = mtfEmaFastVal < mtfEmaSlowVal
-
-// Pull 5-minute MACD histogram for momentum context
-// Destructure MACD tuple at global scope — ta.macd() returns [line, signal, histogram]
+// Consolidated into a single request.security() tuple — 1 pass through 5-min data instead of 6
+// NOTE: mtfVwapCrossUp/Dn were previously pulled but never used in scoring, dashboard, or alerts — removed as dead code.
 [_macd5Line, _macd5Sig, _macd5Hist] = ta.macd(close, 12, 26, 9)
-float mtfMacdHist = request.security(syminfo.tickerid, "5", _macd5Hist, lookahead=barmerge.lookahead_off)
+[_mtfRsi, _mtfEmaFastVal, _mtfEmaSlowVal, _mtfMacdHist] = request.security(
+     syminfo.tickerid, "5",
+     [ta.rsi(close, i_mtfRsiLen), ta.ema(close, i_mtfEmaFast), ta.ema(close, i_mtfEmaSlow), _macd5Hist],
+     lookahead=barmerge.lookahead_off)
 
-// Pull 5-minute VWAP cross detection
-bool mtfVwapCrossUp  = request.security(syminfo.tickerid, "5", ta.crossover(close, ta.vwap(hlc3)),  lookahead=barmerge.lookahead_off)
-bool mtfVwapCrossDn  = request.security(syminfo.tickerid, "5", ta.crossunder(close, ta.vwap(hlc3)), lookahead=barmerge.lookahead_off)
+float mtfRsi         = i_useMTF ? _mtfRsi         : na
+float mtfEmaFastVal  = i_useMTF ? _mtfEmaFastVal  : na
+float mtfEmaSlowVal  = i_useMTF ? _mtfEmaSlowVal  : na
+float mtfMacdHist    = i_useMTF ? _mtfMacdHist    : na
+bool  mtfBullish     = not na(mtfEmaFastVal) and mtfEmaFastVal > mtfEmaSlowVal
+bool  mtfBearish     = not na(mtfEmaFastVal) and mtfEmaFastVal < mtfEmaSlowVal
 
 getMtfTrendLabel() =>
     if mtfBullish
@@ -633,14 +634,12 @@ if isPM
         pmHigh := math.max(pmHigh, high)
         pmLow  := math.min(pmLow, low)
 
-// --- Prior Day High / Low / Close ---
-float pdHigh  = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
-float pdLow   = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
-float pdClose = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
-
-// --- Prior Day VWAP Close ---
-// Pulls the VWAP value from the prior daily bar — represents institutional fair value from prior session
-float pdVwap = request.security(syminfo.tickerid, "D", ta.vwap(hlc3)[1], lookahead=barmerge.lookahead_on)
+// --- Prior Day High / Low / Close + Prior Day VWAP Close + Current Day Open ---
+// Consolidated into a single request.security() tuple — 1 pass through daily data instead of 5
+[pdHigh, pdLow, pdClose, pdVwap, dayOpen] = request.security(
+     syminfo.tickerid, "D",
+     [high[1], low[1], close[1], ta.vwap(hlc3)[1], open],
+     lookahead=barmerge.lookahead_on)
 
 // --- Opening Range ---
 var float orHigh     = na
@@ -1150,8 +1149,7 @@ var table dash = table.new(position.bottom_right, 3, 31,
      frame_width  = 1,
      frame_color  = color.new(#FFFFFF, 80))
 
-// Pre-fetch daily open for day change calculation
-float dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+// dayOpen already fetched in the consolidated daily tuple above
 float avgVol  = ta.sma(volume, 20)
 
 // Session progress — ta.barssince must run on every bar for consistency
