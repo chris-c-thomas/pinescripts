@@ -24,6 +24,10 @@
 //   - Volume Footprint delta available as optional scoring condition (#10)
 //   - Opening range default 15 minutes (3 bars)
 //
+// v1.1.0 CPU optimization:
+//   - TICK request moved from "1" to chart TF (eliminates 5x LTF bar mult)
+//   - max_bars_back reduced 5000 → 2000 (~25 sessions retained)
+//
 // Components:
 //   - EMA ribbon (9/15/21) with dynamic trend cloud fill
 //   - Session-anchored VWAP with standard deviation bands
@@ -56,7 +60,7 @@ indicator(
      max_labels_count  = 500,
      max_lines_count   = 500,
      max_boxes_count   = 200,
-     max_bars_back     = 5000
+     max_bars_back     = 2000
  )
 
 // ============================================================================
@@ -150,7 +154,7 @@ i_sqzKCMult    = input.float(1.5,  "KC Multiplier",                   minval=0.5
 
 // --- NYSE TICK ---
 i_useTick      = input.bool(true,   "Enable NYSE TICK Index",          group=GP_TICK,
-                     tooltip="Pulls NYSE TICK (USI:TICK) for market breadth confirmation. Requires RTH data.")
+                     tooltip="Pulls NYSE TICK at chart timeframe for market breadth confirmation. Requires RTH data.")
 i_tickSymbol   = input.string("USI:TICK", "TICK Symbol",               group=GP_TICK,
                      options=["USI:TICK", "USI:TICK.NQ"])
 i_tickBull     = input.int(500,     "TICK Bullish Threshold",          minval=100, maxval=1000, step=50, group=GP_TICK)
@@ -330,7 +334,10 @@ float sqzMomentum  = ta.linreg(sqzMomSource, i_sqzBBLen, 0)
 // NYSE TICK INDEX
 // ============================================================================
 
-float tickValue = i_useTick ? request.security(i_tickSymbol, "1", close, lookahead=barmerge.lookahead_off) : na
+// Pull TICK at chart timeframe to avoid LTF bar multiplication.
+// On 5-min chart, this returns the TICK close at each 5-min bar boundary —
+// functionally equivalent for threshold-based scoring.
+float tickValue = i_useTick ? request.security(i_tickSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off) : na
 
 // ============================================================================
 // VOLUME FOOTPRINT DATA
@@ -338,7 +345,9 @@ float tickValue = i_useTick ? request.security(i_tickSymbol, "1", close, lookahe
 // Dashboard + optional scoring condition (#10).
 // request.footprint() counts toward the 40-call request.*() budget.
 // Total request.*() calls after tuple consolidation: 4
-//   1x "1" (TICK), 1x "1" (MTF tuple), 1x "D" (daily tuple), 1x footprint
+//   1x chart TF (TICK), 1x "1" (MTF tuple), 1x "D" (daily tuple), 1x footprint
+// CPU optimization v1.1.0: TICK moved from "1" to chart TF, eliminating 5x
+//   LTF bar multiplication. max_bars_back reduced 5000 → 2000.
 
 footprint fpData = i_useFootprint ? request.footprint(i_fpTicksPerRow, i_fpVaPct) : na
 

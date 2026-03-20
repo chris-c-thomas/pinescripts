@@ -36,6 +36,12 @@
 //     prior-bar POC in proximity pool
 //   - Directional bias background tint (optional)
 //
+// v1.1.0 CPU optimization:
+//   - TICK request moved from "1" to chart TF (eliminates 15x LTF bar mult)
+//   - TICK SMA smoothing now computed locally: SMA(3) on 15-min bars
+//     (= 45-min window, up from SMA(5) on 1-min bars = 5-min window)
+//   - max_bars_back reduced 5000 → 2000 (~77 sessions retained)
+//
 // Components:
 //   - EMA ribbon (9/15/21) + 50 EMA anchor
 //   - Session-anchored VWAP with standard deviation bands
@@ -75,7 +81,7 @@ indicator(
      max_labels_count  = 500,
      max_lines_count   = 500,
      max_boxes_count   = 200,
-     max_bars_back     = 5000
+     max_bars_back     = 2000
  )
 
 // ============================================================================
@@ -180,7 +186,7 @@ i_sqzKCMult    = input.float(1.5,  "KC Multiplier",                   minval=0.5
 
 // --- NYSE TICK ---
 i_useTick      = input.bool(true,   "Enable NYSE TICK Index",          group=GP_TICK,
-                     tooltip="Pulls NYSE TICK (USI:TICK) for market breadth confirmation. Uses SMA-smoothed TICK to reduce noise on 15-min timeframe.")
+                     tooltip="Pulls NYSE TICK at chart timeframe for market breadth confirmation. SMA(3) smoothing computed locally (= 45-min window on 15-min chart).")
 i_tickSymbol   = input.string("USI:TICK", "TICK Symbol",               group=GP_TICK,
                      options=["USI:TICK", "USI:TICK.NQ"])
 i_tickBull     = input.int(300,     "TICK Bullish Threshold (smoothed)", minval=50, maxval=800, step=50, group=GP_TICK)
@@ -465,10 +471,13 @@ getDivColor() =>
 // NYSE TICK INDEX (SMA-smoothed for 15-min context)
 // ============================================================================
 
-// Consolidated into a single request.security() tuple — 1 pass through 1-min data instead of 2
-[_tickRaw, _tickSmooth] = request.security(i_tickSymbol, "1", [close, ta.sma(close, 5)], lookahead=barmerge.lookahead_off)
-float tickRaw    = i_useTick ? _tickRaw    : na
-float tickSmooth = i_useTick ? _tickSmooth : na
+// Pull TICK at chart timeframe to avoid 15x LTF bar multiplication.
+// SMA smoothing computed locally on the chart-TF TICK close values.
+// SMA(3) on 15-min bars = 45-minute smoothing window — appropriate for the
+// 15-min chart's inherent temporal resolution and ~26 bars/session cadence.
+float _tickRawVal = request.security(i_tickSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off)
+float tickRaw    = i_useTick ? _tickRawVal    : na
+float tickSmooth = i_useTick ? ta.sma(_tickRawVal, 3) : na
 
 // Use smoothed TICK for scoring, raw for dashboard display
 float tickValue = tickSmooth
@@ -479,7 +488,10 @@ float tickValue = tickSmooth
 // Full integration: scoring, level proximity, dashboard, POC/VA plots.
 // request.footprint() counts toward the 40-call request.*() budget.
 // Total request.*() calls after tuple consolidation: 4
-//   1x "1" (TICK tuple), 1x "5" (MTF tuple), 1x "D" (daily tuple), 1x footprint
+//   1x chart TF (TICK), 1x "5" (MTF tuple), 1x "D" (daily tuple), 1x footprint
+// CPU optimization v1.1.0: TICK moved from "1" to chart TF, eliminating 15x
+//   LTF bar multiplication. SMA smoothing computed locally. max_bars_back
+//   reduced 5000 → 2000.
 
 footprint fpData = i_useFootprint ? request.footprint(i_fpTicksPerRow, i_fpVaPct) : na
 

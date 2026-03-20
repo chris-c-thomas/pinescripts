@@ -257,7 +257,7 @@ The NYSE TICK measures the net number of NYSE stocks ticking up minus those tick
 | -800 to -500 | BEARISH | Red | Broad selling pressure. PUTS entries are supported. |
 | < -800 | EXTREME BEAR | Red | Very strong selling breadth. High-conviction bearish environment. |
 
-**Data pull**: uses `request.security(i_tickSymbol, "1", close)` to pull the 1-minute TICK value. The TICK index only produces data during RTH (9:30 AM - 4:00 PM ET). During pre-market and after-hours, TICK returns `na` and the dashboard displays "N/A".
+**Data pull**: uses `request.security(i_tickSymbol, timeframe.period, close)` to pull the TICK value at chart timeframe resolution (v1.1.0; previously pulled at 1-min). On a 5-minute chart, this returns the TICK close at each 5-minute bar boundary — functionally equivalent for threshold-based scoring. The TICK index only produces data during RTH (9:30 AM - 4:00 PM ET). During pre-market and after-hours, TICK returns `na` and the dashboard displays "N/A".
 
 **Signal integration (scoring model)**: on the 5-minute variant, TICK is integrated as **enhancement condition #9** in the scoring system. For CALLS, it scores +1 when `TICK > i_tickBull` (+500 default). For PUTS, it scores +1 when `TICK < i_tickBear` (-500 default). This is stricter than the 1-minute variant's filter (which only requires `TICK > 0`); the 5-minute scoring model rewards strong breadth confirmation rather than just directional agreement.
 
@@ -727,7 +727,7 @@ Min Score:             3
 
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters) to avoid reallocation on every bar. TTM Squeeze calculations (BB, KC, linear regression) use native `ta.*` functions and add negligible overhead. The dashboard table is updated only on `barstate.islast`.
 
-**`request.*()` budget**: the script makes 4 `request.*()` calls total, consolidated via tuple returns (v1.0.1): 1 tuple on `"1"` for MTF (1-min RSI, EMA fast, EMA slow), 1 for NYSE TICK on `"1"` (separate symbol, cannot merge with MTF tuple), 1 tuple on `"D"` (prior day high, low, close, current day open), and 1 for `request.footprint()` (volume footprint data). This is well within TradingView's limit of 40 calls per script. Disabling MTF removes 1 call; disabling TICK removes 1; disabling footprint removes 1.
+**`request.*()` budget**: the script makes 4 `request.*()` calls total, consolidated via tuple returns: 1 tuple on `"1"` for MTF (1-min RSI, EMA fast, EMA slow), 1 for NYSE TICK at chart timeframe (v1.1.0; moved from `"1"` to `timeframe.period` to eliminate 5x LTF bar multiplication), 1 tuple on `"D"` (prior day high, low, close, current day open), and 1 for `request.footprint()` (volume footprint data). This is well within TradingView's limit of 40 calls per script. Disabling MTF removes 1 call; disabling TICK removes 1; disabling footprint removes 1.
 
 **Repainting**: all signal logic is gated by `barstate.isconfirmed`. Signals appear after bar close only. MTF data from `request.security()` uses `lookahead=barmerge.lookahead_off` (no forward-looking data) for 1-minute pulls, ensuring no repainting from lower-timeframe data.
 
@@ -764,3 +764,33 @@ Min Score:             3
 9. **TICK data availability**: the NYSE TICK symbol (`USI:TICK`) requires your TradingView data plan to include the relevant exchange. If unavailable, the TICK row shows "N/A" and the TICK scoring condition does not contribute to the score (it will never award a point, but will not block signals). TICK data is only available during RTH (9:30 AM - 4:00 PM ET).
 
 10. **Squeeze recency window is hardcoded**: the 3-bar recency window for squeeze scoring (condition #8) is defined in the source code, not as a configurable input. Modifying the window requires editing the Pine Script source (`sqzBarsSinceFire <= 3`).
+
+---
+
+## Changelog
+
+### v1.1.0 — CPU Optimization
+
+**Problem**: TradingView runtime error — "CPU time exceeded. The study consumes 1.1 times more than allowed." Affected Ultimate plan users.
+
+**Root cause**: the TICK `request.security()` call targeted the `"1"` (1-minute) timeframe, forcing Pine to process 5 sub-bars per chart bar across the full historical buffer. Combined with `max_bars_back = 5000`, this created ~25,000 additional bar evaluations from a single call.
+
+**Changes**:
+
+- **TICK request timeframe**: moved from `"1"` to `timeframe.period` (chart timeframe). On a 5-minute chart, TICK now returns the close at each 5-minute bar boundary rather than the last 1-minute close. For threshold-based scoring (is TICK > 500?), this is functionally equivalent.
+- **`max_bars_back`**: reduced from 5000 to 2000. Retains ~25 sessions of lookback — sufficient for all `ta.*` functions and level calculations.
+- **Estimated CPU reduction**: ~78% (from ~11x effective bar load to ~6x, multiplied by the 60% buffer reduction).
+
+**What did NOT change**: signal logic, scoring weights/thresholds, dashboard layout, alert messages, MTF requests (still `"1"`), footprint integration, all visual elements.
+
+### v1.0.1 — Tuple Consolidation + Dead Code Removal
+
+- Consolidated MTF `request.security()` calls into a single 3-value tuple (1 pass through 1-min data instead of 5).
+- Consolidated daily `request.security()` calls into a single 4-value tuple.
+- Removed unused VWAP cross MTF variables (`mtfVwapCrossUp`/`Dn`).
+
+### v1.0.0 — Initial Release
+
+- Full 5+4+1 scoring engine with 10 conditions.
+- Volume Footprint integration via `request.footprint()`.
+- 21-row dashboard, dual alert system, expanded candle patterns.

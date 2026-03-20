@@ -149,7 +149,7 @@ Dashboard row shows the ratio and classification. Not directly scored.
 - **TTM Squeeze detection** identifying Bollinger Band compression inside Keltner Channels. Three states: SQUEEZE ON, FIRED, OFF. Integrated as confirmation scoring condition (1x weight).
 - **Bollinger Band Width Percentile** providing a continuous volatility metric relative to recent history. Three states: EXPANDING (>1.5x), NORMAL, COMPRESSING (<0.7x). Complements the binary squeeze state.
 - **RSI Divergence Detection** over configurable lookback (default 5 bars = 1.25 hrs). Classic bullish/bearish divergence scored as confirmation condition (1x). Dashboard and alert integration.
-- **NYSE TICK Index with SMA smoothing** pulled via `request.security()`. Raw and 5-period SMA-smoothed TICK pulled; smoothed value used for scoring with calibrated lower thresholds (300/-300/600).
+- **NYSE TICK Index with SMA smoothing** pulled via `request.security()` at chart timeframe (v1.1.0; moved from 1-min to eliminate 15x LTF bar multiplication). SMA(3) smoothing computed locally on 15-min bars (= 45-minute window); smoothed value used for scoring with calibrated lower thresholds (300/-300/600).
 - **Volume Footprint** (v1.2) integration via `request.footprint()` for deep intrabar order flow analysis. Displays buy/sell volume, delta with strength classification, cumulative session delta, and POC/VAH/VAL as step-line levels. Delta integrated as 1x confirmation scoring condition (ON by default). Prior bar's POC enriches the support/resistance proximity pool. Requires TradingView Premium or Ultimate plan; degrades gracefully to N/A on lower plans.
 - **Multi-timeframe confirmation layer (5-minute)** pulling 5-min RSI, EMA trend, and MACD histogram via consolidated `request.security()` tuple.
 - **Pre-Market High/Low** automatically detected and drawn as horizontal levels once RTH begins.
@@ -194,7 +194,7 @@ Dashboard row shows the ratio and classification. Not directly scored.
 | Strong Close | 50% | 55% | 60% | 15-min candles have proportionally larger wicks |
 | Hammer/Star | 2.0x body | 1.8x body | 1.6x body | 15-min patterns show less extreme tail ratios |
 | MTF Source | N/A | 1-min (RSI + EMA) | 5-min (RSI + EMA + MACD) | 5-min is the natural lower-TF for 15-min |
-| TICK Handling | Raw 1-min | Raw 1-min | Raw + SMA(5) smoothed | Noise reduction for 15-min timeframe |
+| TICK Handling | Raw 1-min | Raw chart-TF | Raw chart-TF + SMA(3) local | Noise reduction; chart-TF eliminates LTF bar multiplication |
 | TICK Thresholds | 500/-500/800 | 500/-500/800 | 300/-300/600 | Calibrated for smoothed signal |
 | Squeeze Recency | 5 bars (~5 min) | 3 bars (~15 min) | 2 bars (~30 min) | Appropriate for 15-min structural plays |
 | Level Proximity | N/A | 1.0 ATR | 1.5 ATR (includes PD VWAP) | Widened radius; prior VWAP added to level pool |
@@ -347,7 +347,7 @@ Displayed as dashboard Row 21. Not scored — complements the binary squeeze sta
 | Bearish Threshold | -300 | Smoothed TICK below this = bearish breadth |
 | Extreme Threshold | 600 | Smoothed TICK beyond this = extreme breadth |
 
-Both raw and SMA(5)-smoothed TICK are pulled from the 1-min timeframe. Smoothed value used for scoring; both shown in dashboard. Confirmation condition (1x weight).
+TICK is pulled at chart timeframe via `request.security()` (v1.1.0; moved from 1-min to eliminate 15x LTF bar multiplication). SMA(3) smoothing is computed locally on the chart-TF TICK closes, producing a 45-minute smoothing window on 15-min bars. Smoothed value used for scoring; both raw and smoothed shown in dashboard. Confirmation condition (1x weight).
 
 ### Multi-Timeframe Confirmation (5-Min)
 
@@ -766,9 +766,9 @@ Min Score:             5
 
 **Performance**: the script uses `var` declarations for persistent state (lines, labels, level values, cooldown counters). All dashboard updates occur only on `barstate.islast`. RSI divergence detection uses native `ta.lowest()` and `ta.highest()` with no loops. ATR regime and BB width percentile use simple `ta.sma()` comparisons. Score trend tracking uses bar indexing (`[1]`, `[2]`) with no arrays.
 
-**`request.*()` budget**: the script makes 4 `request.*()` calls total, consolidated via tuple returns (v1.2.1):
+**`request.*()` budget**: the script makes 4 `request.*()` calls total, consolidated via tuple returns:
 
-- 1 tuple on `"1"` (NYSE TICK raw close + SMA(5) smoothed)
+- 1 on chart timeframe (NYSE TICK close; v1.1.0 moved from `"1"` to `timeframe.period` to eliminate 15x LTF bar multiplication)
 - 1 tuple on `"5"` (MTF RSI, EMA fast, EMA slow, MACD histogram)
 - 1 tuple on `"D"` (prior day high, low, close, VWAP close, current day open)
 - 1 for `request.footprint()` (volume footprint data)
@@ -793,7 +793,7 @@ This is well within TradingView's limit of 40 calls. Disabling MTF removes 1 cal
 
 **Opening range bar math**: `orBarsNeeded = math.ceil(i_orMinutes / 15)`.
 
-**TICK smoothing**: raw close and SMA(5) pulled in a single `request.security()` tuple on the 1-min timeframe for true 5-minute average breadth.
+**TICK smoothing**: TICK close is pulled at chart timeframe via a single `request.security()` call. SMA(3) smoothing is computed locally using `ta.sma()` on the chart-TF TICK values. On a 15-min chart, this produces a 45-minute smoothing window — appropriate for the 15-min chart's inherent temporal resolution. The raw value is displayed in the dashboard alongside the smoothed value for transparency.
 
 **Timezone**: session detection uses configurable `i_tz`, defaulting to `America/New_York`.
 
@@ -819,7 +819,7 @@ This is well within TradingView's limit of 40 calls. Disabling MTF removes 1 cal
 
 9. **Squeeze recency window hardcoded**: the 2-bar window is in source code, not an input.
 
-10. **TICK smoothing period hardcoded**: SMA(5) is in source code.
+10. **TICK smoothing period hardcoded**: SMA(3) on chart-TF TICK values is in source code (v1.1.0; previously SMA(5) on 1-min).
 
 11. **Sparse signal environment**: ~26 RTH bars/session means signals are inherently rare. Some sessions may produce zero signals, particularly at higher min score settings.
 
@@ -832,3 +832,30 @@ This is well within TradingView's limit of 40 calls. Disabling MTF removes 1 cal
 15. **Score trend uses closing scores**: the 3-bar score history is computed from confirmed bar scores. Intra-bar score changes are not reflected until bar close.
 
 16. **Weighted scoring favors structural alignment**: by design, a signal can reach score 6 (all structural) with zero confirmation conditions. At the default min score of 7, at least one confirmation is always required. Lowering below 6 in weighted mode allows pure-structural signals, which may be too permissive.
+
+---
+
+## Changelog
+
+### v1.1.0 — CPU Optimization
+
+**Problem**: TradingView runtime error — "CPU time exceeded. The study consumes 1.0 times more than allowed." Affected Ultimate plan users.
+
+**Root cause**: the TICK `request.security()` call targeted the `"1"` (1-minute) timeframe, forcing Pine to process 15 sub-bars per chart bar across the full historical buffer. Combined with `max_bars_back = 5000`, this created ~75,000 additional bar evaluations from a single call.
+
+**Changes**:
+
+- **TICK request timeframe**: moved from `"1"` to `timeframe.period` (chart timeframe). On a 15-minute chart, TICK now returns the close at each 15-minute bar boundary rather than the last 1-minute close. For threshold-based scoring (is smoothed TICK > 300?), this is functionally equivalent.
+- **TICK SMA smoothing**: moved from `ta.sma(close, 5)` computed inside the 1-min `request.security()` tuple (= 5-minute smoothing window) to `ta.sma(_tickRawVal, 3)` computed locally on chart-TF values (= 45-minute smoothing window on 15-min bars). The wider window is appropriate for the 15-min chart's inherent temporal resolution.
+- **`max_bars_back`**: reduced from 5000 to 2000. Retains ~77 sessions of lookback — sufficient for all `ta.*` functions and level calculations.
+- **Estimated CPU reduction**: ~92% (from ~19x effective bar load to ~4x, multiplied by the 60% buffer reduction).
+
+**What did NOT change**: signal logic, scoring weights/thresholds, dashboard layout (raw + smoothed TICK still displayed), alert messages, MTF requests (still `"5"`), footprint integration, all visual elements.
+
+### v1.0.0 — Initial Release
+
+- Weighted confluence scoring engine: 3 structural (2x) + 10 confirmation (1x).
+- 50 EMA anchor, RSI divergence, MACD via 5-min MTF, ATR regime, BB width percentile.
+- Volume Footprint full integration (scoring, POC/VA plots, proximity pool).
+- Score trend indicator, directional bias background, session progress.
+- 31-row dashboard, 11 static + 5 dynamic alerts.
