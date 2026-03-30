@@ -1,0 +1,766 @@
+// ============================================================================
+// Bottom Level Finder — Unified
+// Timeframe: Daily chart (recommended for all modes)
+// Version: 1.0.0
+// Author: Chris Thomas
+// ============================================================================
+// Multi-horizon bottom/support identification with a single mode selector.
+// Switch the mode to match your TradingView zoom preset (1D/5D/1M/3M/6M/1Y/5Y).
+//
+// Each mode adapts:
+//   - Drawdown level granularity (e.g., -0.5% steps for 1D, -10% steps for 5Y)
+//   - Moving average suite (short-term for 1D, weekly/monthly for 5Y)
+//   - MA cross pair (10/20 for short, 50/200 for long)
+//   - Bottom signal thresholds (RSI, VIX, MA support level)
+//   - Fibonacci retracements (ATH → swing low, shared across modes)
+//
+// request.security() budget: 3 calls
+//   1. Weekly: 50W/100W/200W SMA + RSI + BB %B (1 tuple)
+//   2. Monthly: MACD histogram current + prior (1 tuple)
+//   3. VIX: close + 20-period SMA (1 call)
+//
+// Chart setup: Set top bar to Daily (D). Use bottom bar to zoom.
+// ============================================================================
+
+//@version=6
+indicator(
+     title      = "Bottom Level Finder",
+     shorttitle = "BLF",
+     overlay    = true,
+     max_lines_count   = 50,
+     max_labels_count  = 50,
+     max_bars_back     = 5000
+ )
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+var string GP_MODE     = "Mode"
+var string GP_REF      = "Reference Levels"
+var string GP_FIB      = "Fibonacci Retracements"
+var string GP_DD       = "Drawdown Levels"
+var string GP_MA       = "Moving Averages"
+var string GP_VIX      = "VIX"
+var string GP_DASH     = "Dashboard"
+
+var color C_BULL       = #00E676
+var color C_BEAR       = #FF1744
+var color C_NEUTRAL    = #B0BEC5
+var color C_YELLOW     = #FFD600
+var color C_ORANGE     = #FF9100
+var color C_PURPLE     = #7C4DFF
+var color C_GRAY       = #616161
+
+var color C_FIB_236    = #4FC3F7
+var color C_FIB_382    = #29B6F6
+var color C_FIB_500    = #FFD600
+var color C_FIB_618    = #FF9100
+var color C_FIB_786    = #FF5722
+
+var color C_DD1        = #C8E6C9
+var color C_DD2        = #A5D6A7
+var color C_DD3        = #FFD54F
+var color C_DD4        = #FFB74D
+var color C_DD5        = #E57373
+
+var color C_MA1        = #81C784
+var color C_MA2        = #26A69A
+var color C_MA3        = #42A5F5
+var color C_MA4        = #EF5350
+
+var color C_DASH_BG    = #1A1A2E
+var color C_DASH_HDR   = #2A2A4E
+var color C_DASH_TEXT  = #E0E0E0
+var color C_DASH_DIM   = #78909C
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+i_mode = input.string("6M", "Horizon Mode", group=GP_MODE,
+     options=["1D", "5D", "1M", "3M", "6M", "1Y", "5Y"],
+     tooltip="Match to your TradingView zoom preset.\nChart timeframe should be Daily (D) for all modes.")
+
+i_athOverride      = input.float(0.0,  "ATH Price Override (0 = auto)",  group=GP_REF,
+     tooltip="Leave at 0 to auto-detect from loaded data.")
+i_swingLowOverride = input.float(0.0,  "Swing Low Reference (0 = auto)", group=GP_REF,
+     tooltip="Fibonacci anchor. 0 = auto.\nSPY: Oct-2022 ≈ 348 | COVID ≈ 218")
+i_showATHLine      = input.bool(true,  "Show ATH Line",                  group=GP_REF)
+
+i_showFib      = input.bool(true,     "Show Fibonacci Levels",    group=GP_FIB)
+i_fibLineStyle = input.string("Dashed", "Line Style",             group=GP_FIB, options=["Solid", "Dashed", "Dotted"])
+i_fibLineWidth = input.int(1,         "Line Width",               group=GP_FIB, minval=1, maxval=4)
+
+i_showDD       = input.bool(true,     "Show Drawdown Levels",     group=GP_DD)
+i_ddLineStyle  = input.string("Dotted", "Line Style",             group=GP_DD, options=["Solid", "Dashed", "Dotted"])
+i_ddLineWidth  = input.int(1,         "Line Width",               group=GP_DD, minval=1, maxval=4)
+
+i_showMA       = input.bool(true,     "Show Moving Averages",     group=GP_MA)
+i_showVIX      = input.bool(true,     "Show VIX Data",            group=GP_VIX)
+i_vixSymbol    = input.symbol("CBOE:VIX", "VIX Symbol",           group=GP_VIX)
+
+i_showDash     = input.bool(true,     "Show Dashboard",           group=GP_DASH)
+i_dashPos      = input.string("Bottom Left", "Position",             group=GP_DASH, options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+i_dashSize     = input.string("Small", "Text Size",                group=GP_DASH, options=["Tiny", "Small", "Normal"])
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+f2(float val) =>
+    str.tostring(val, "#.##")
+
+fPct(float val) =>
+    (val >= 0 ? "+" : "") + str.tostring(val, "#.#") + "%"
+
+distPct(float level, float current) =>
+    level > 0 ? (current - level) / level * 100 : na
+
+// ============================================================================
+// ATH & SWING LOW
+// ============================================================================
+var float detectedATH = na
+var float detectedLow = na
+
+if na(detectedATH) or high > detectedATH
+    detectedATH := high
+if na(detectedLow) or low < detectedLow
+    detectedLow := low
+
+float ath      = i_athOverride > 0      ? i_athOverride      : detectedATH
+float swingLow = i_swingLowOverride > 0 ? i_swingLowOverride : detectedLow
+float athSpan  = ath - swingLow
+float currentDD = ath > 0 ? (close - ath) / ath * 100 : na
+
+// ============================================================================
+// FIBONACCI (shared across all modes)
+// ============================================================================
+float fib236 = ath - athSpan * 0.236
+float fib382 = ath - athSpan * 0.382
+float fib500 = ath - athSpan * 0.500
+float fib618 = ath - athSpan * 0.618
+float fib786 = ath - athSpan * 0.786
+
+// ============================================================================
+// MODE-DEPENDENT DRAWDOWN LEVELS
+// ============================================================================
+dd1m = switch i_mode
+    "1D" => 0.995
+    "5D" => 0.99
+    "1M" => 0.98
+    "3M" => 0.97
+    "6M" => 0.95
+    => 0.90
+dd2m = switch i_mode
+    "1D" => 0.99
+    "5D" => 0.98
+    "1M" => 0.95
+    "3M" => 0.95
+    "6M" => 0.90
+    => 0.85
+dd3m = switch i_mode
+    "1D" => 0.98
+    "5D" => 0.97
+    "1M" => 0.92
+    "3M" => 0.90
+    "6M" => 0.85
+    => 0.80
+dd4m = switch i_mode
+    "1D" => 0.97
+    "5D" => 0.95
+    "1M" => 0.90
+    "3M" => 0.85
+    "6M" => 0.80
+    => 0.75
+dd5m = switch i_mode
+    "1D" => 0.95
+    "5D" => 0.92
+    "1M" => 0.85
+    "3M" => 0.80
+    "6M" => 0.75
+    => 0.70
+
+dd1lbl = switch i_mode
+    "1D" => "-0.5%"
+    "5D" => "-1%"
+    "1M" => "-2%"
+    "3M" => "-3%"
+    "6M" => "-5%"
+    => "-10%"
+dd2lbl = switch i_mode
+    "1D" => "-1%"
+    "5D" => "-2%"
+    "1M" => "-5%"
+    "3M" => "-5%"
+    "6M" => "-10%"
+    => "-15%"
+dd3lbl = switch i_mode
+    "1D" => "-2%"
+    "5D" => "-3%"
+    "1M" => "-8%"
+    "3M" => "-10%"
+    "6M" => "-15%"
+    => "-20%"
+dd4lbl = switch i_mode
+    "1D" => "-3%"
+    "5D" => "-5%"
+    "1M" => "-10%"
+    "3M" => "-15%"
+    "6M" => "-20%"
+    => "-25%"
+dd5lbl = switch i_mode
+    "1D" => "-5%"
+    "5D" => "-8%"
+    "1M" => "-15%"
+    "3M" => "-20%"
+    "6M" => "-25%"
+    => "-30%"
+
+float dd1 = ath * dd1m
+float dd2 = ath * dd2m
+float dd3 = ath * dd3m
+float dd4 = ath * dd4m
+float dd5 = ath * dd5m
+
+// ============================================================================
+// ALL DAILY MOVING AVERAGES
+// ============================================================================
+float sma5d   = ta.sma(close, 5)
+float sma10d  = ta.sma(close, 10)
+float sma20d  = ta.sma(close, 20)
+float sma50d  = ta.sma(close, 50)
+float sma100d = ta.sma(close, 100)
+float sma200d = ta.sma(close, 200)
+
+// ============================================================================
+// request.security() — WEEKLY (1 call)
+// ============================================================================
+float _sma50w  = ta.sma(close, 50)
+float _sma100w = ta.sma(close, 100)
+float _sma200w = ta.sma(close, 200)
+float _rsiW    = ta.rsi(close, 14)
+[_wBbM, _wBbU, _wBbL] = ta.bb(close, 20, 2.0)
+float _wBbPctB = (_wBbU - _wBbL) != 0 ? (close - _wBbL) / (_wBbU - _wBbL) : na
+
+[sma50w, sma100w, sma200w, rsiW, bbPctBW] = request.security(
+    syminfo.tickerid, "W",
+    [_sma50w, _sma100w, _sma200w, _rsiW, _wBbPctB],
+    lookahead = barmerge.lookahead_off
+)
+
+// ============================================================================
+// request.security() — MONTHLY (1 call)
+// ============================================================================
+[_mLine, _mSig, _mHist] = ta.macd(close, 12, 26, 9)
+
+[macdHistM, macdHistPrevM] = request.security(
+    syminfo.tickerid, "M",
+    [_mHist, _mHist[1]],
+    lookahead = barmerge.lookahead_off
+)
+
+// ============================================================================
+// request.security() — VIX (1 call)
+// ============================================================================
+float _vixC = close
+float _vixS = ta.sma(close, 20)
+
+[vixVal, vixSMA] = request.security(
+    i_vixSymbol, timeframe.period,
+    [_vixC, _vixS],
+    lookahead = barmerge.lookahead_off
+)
+
+// ============================================================================
+// MODE-DEPENDENT MA SLOTS
+// ============================================================================
+ma1 = switch i_mode
+    "1D" => sma5d
+    "5D" => sma5d
+    "1M" => sma5d
+    "3M" => sma10d
+    "6M" => sma20d
+    "1Y" => sma50d
+    => sma200d
+ma2 = switch i_mode
+    "1D" => sma10d
+    "5D" => sma10d
+    "1M" => sma10d
+    "3M" => sma20d
+    "6M" => sma50d
+    "1Y" => sma100d
+    => sma50w
+ma3 = switch i_mode
+    "1D" => sma20d
+    "5D" => sma20d
+    "1M" => sma20d
+    "3M" => sma50d
+    "6M" => sma100d
+    "1Y" => sma200d
+    => sma100w
+ma4 = switch i_mode
+    "1D" => sma50d
+    "5D" => sma50d
+    "1M" => sma50d
+    "3M" => sma100d
+    "6M" => sma200d
+    "1Y" => sma50w
+    => sma200w
+
+ma1name = switch i_mode
+    "1D" => "5D"
+    "5D" => "5D"
+    "1M" => "5D"
+    "3M" => "10D"
+    "6M" => "20D"
+    "1Y" => "50D"
+    => "200D"
+ma2name = switch i_mode
+    "1D" => "10D"
+    "5D" => "10D"
+    "1M" => "10D"
+    "3M" => "20D"
+    "6M" => "50D"
+    "1Y" => "100D"
+    => "50W"
+ma3name = switch i_mode
+    "1D" => "20D"
+    "5D" => "20D"
+    "1M" => "20D"
+    "3M" => "50D"
+    "6M" => "100D"
+    "1Y" => "200D"
+    => "100W"
+ma4name = switch i_mode
+    "1D" => "50D"
+    "5D" => "50D"
+    "1M" => "50D"
+    "3M" => "100D"
+    "6M" => "200D"
+    "1Y" => "50W"
+    => "200W"
+
+// ============================================================================
+// MA CROSS DETECTION
+// ============================================================================
+var int bsc1020 = 0
+bsc1020 := ta.cross(sma10d, sma20d) ? 0 : bsc1020 + 1
+var int bsc2050 = 0
+bsc2050 := ta.cross(sma20d, sma50d) ? 0 : bsc2050 + 1
+var int bsc50200 = 0
+bsc50200 := ta.cross(sma50d, sma200d) ? 0 : bsc50200 + 1
+
+crossBull = switch i_mode
+    "1D" => sma10d > sma20d
+    "5D" => sma10d > sma20d
+    "1M" => sma10d > sma20d
+    "3M" => sma20d > sma50d
+    => sma50d > sma200d
+crossName = switch i_mode
+    "1D" => "10/20"
+    "5D" => "10/20"
+    "1M" => "10/20"
+    "3M" => "20/50"
+    => "50/200"
+crossBars = switch i_mode
+    "1D" => bsc1020
+    "5D" => bsc1020
+    "1M" => bsc1020
+    "3M" => bsc2050
+    => bsc50200
+
+// ============================================================================
+// DAILY INDICATORS
+// ============================================================================
+float rsiD    = ta.rsi(close, 14)
+[_bbM, _bbU, _bbL] = ta.bb(close, 20, 2.0)
+float bbPctBD = (_bbU - _bbL) != 0 ? (close - _bbL) / (_bbU - _bbL) : na
+[_dLine, _dSig, _dHist] = ta.macd(close, 12, 26, 9)
+float volSMA20 = ta.sma(volume, 20)
+float volRatio = volSMA20 > 0 ? volume / volSMA20 : na
+
+// ============================================================================
+// 6-FACTOR BOTTOM SIGNAL SCORECARD
+// ============================================================================
+// S1: RSI oversold
+s1fired = switch i_mode
+    "1D" => rsiD < 20
+    "5D" => rsiD < 25
+    "1M" => rsiD < 25
+    "3M" => rsiD < 30
+    "6M" => rsiD < 30
+    => (not na(rsiW) and rsiW < 30)
+s1name = switch i_mode
+    "1D" => "D RSI (< 20)"
+    "5D" => "D RSI (< 25)"
+    "1M" => "D RSI (< 25)"
+    "3M" => "D RSI (< 30)"
+    "6M" => "D RSI (< 30)"
+    => "W RSI (< 30)"
+s1valStr = switch i_mode
+    "1Y" => (na(rsiW) ? "N/A" : f2(rsiW))
+    "5Y" => (na(rsiW) ? "N/A" : f2(rsiW))
+    => f2(rsiD)
+
+// S2: Bollinger %B < 0
+s2fired = switch i_mode
+    "1Y" => (not na(bbPctBW) and bbPctBW < 0.0)
+    "5Y" => (not na(bbPctBW) and bbPctBW < 0.0)
+    => (not na(bbPctBD) and bbPctBD < 0.0)
+s2name = switch i_mode
+    "1Y" => "W BB %B (< 0)"
+    "5Y" => "W BB %B (< 0)"
+    => "D BB %B (< 0)"
+s2valStr = switch i_mode
+    "1Y" => (na(bbPctBW) ? "N/A" : f2(bbPctBW))
+    "5Y" => (na(bbPctBW) ? "N/A" : f2(bbPctBW))
+    => (na(bbPctBD) ? "N/A" : f2(bbPctBD))
+
+// S3: Momentum turn (MACD daily for short, W RSI for mid, M MACD for long)
+s3fired = switch i_mode
+    "1D" => (_dHist < 0 and _dHist > nz(_dHist[1]))
+    "5D" => (_dHist < 0 and _dHist > nz(_dHist[1]))
+    "1M" => (_dHist < 0 and _dHist > nz(_dHist[1]))
+    "3M" => (not na(rsiW) and rsiW < 40)
+    "6M" => (not na(rsiW) and rsiW < 40)
+    => (not na(macdHistM) and not na(macdHistPrevM) and macdHistM < 0 and macdHistM > macdHistPrevM)
+s3name = switch i_mode
+    "1D" => "D MACD Turn"
+    "5D" => "D MACD Turn"
+    "1M" => "D MACD Turn"
+    "3M" => "W RSI (< 40)"
+    "6M" => "W RSI (< 40)"
+    => "M MACD Turn"
+s3valStr = switch i_mode
+    "1D" => ((_dHist > nz(_dHist[1]) ? "UP " : "DN ") + f2(_dHist))
+    "5D" => ((_dHist > nz(_dHist[1]) ? "UP " : "DN ") + f2(_dHist))
+    "1M" => ((_dHist > nz(_dHist[1]) ? "UP " : "DN ") + f2(_dHist))
+    "3M" => (na(rsiW) ? "N/A" : f2(rsiW))
+    "6M" => (na(rsiW) ? "N/A" : f2(rsiW))
+    => (na(macdHistM) ? "N/A" : ((macdHistM > nz(macdHistPrevM) ? "UP " : "DN ") + f2(macdHistM)))
+
+// S4: Price below key MA
+s4fired = switch i_mode
+    "1D" => (not na(sma10d) and close <= sma10d)
+    "5D" => (not na(sma20d) and close <= sma20d)
+    "1M" => (not na(sma50d) and close <= sma50d)
+    "3M" => (not na(sma100d) and close <= sma100d)
+    "6M" => (not na(sma200d) and close <= sma200d)
+    "1Y" => (not na(sma200d) and close <= sma200d)
+    => (not na(sma200w) and close <= sma200w)
+s4name = switch i_mode
+    "1D" => "vs 10D SMA"
+    "5D" => "vs 20D SMA"
+    "1M" => "vs 50D SMA"
+    "3M" => "vs 100D SMA"
+    "6M" => "vs 200D SMA"
+    "1Y" => "vs 200D SMA"
+    => "vs 200W SMA"
+s4ma = switch i_mode
+    "1D" => sma10d
+    "5D" => sma20d
+    "1M" => sma50d
+    "3M" => sma100d
+    "6M" => sma200d
+    "1Y" => sma200d
+    => sma200w
+s4valStr = na(s4ma) ? "N/A" : fPct(distPct(s4ma, close))
+
+// S5: VIX
+vixThresh = switch i_mode
+    "1D" => 20.0
+    "5D" => 20.0
+    "1M" => 25.0
+    "3M" => 25.0
+    => 30.0
+s5fired = not na(vixVal) and vixVal > vixThresh
+s5name  = "VIX (> " + str.tostring(vixThresh, "#") + ")"
+s5valStr = na(vixVal) ? "N/A" : f2(vixVal)
+
+// S6: Volume
+bool s6fired = not na(volRatio) and volRatio > 2.0
+
+sigCount = ((s1fired ? 1 : 0) + (s2fired ? 1 : 0) + (s3fired ? 1 : 0)
+         +  (s4fired ? 1 : 0) + (s5fired ? 1 : 0) + (s6fired ? 1 : 0))
+
+vixTier = na(vixVal) ? "N/A" : (vixVal > 35 ? "EXTREME" : (vixVal > 30 ? "VERY HIGH" : (vixVal > 25 ? "HIGH" : (vixVal > 20 ? "ELEVATED" : (vixVal > 15 ? "NORMAL" : "LOW")))))
+
+// ============================================================================
+// MA PLOTS
+// ============================================================================
+plot(i_showMA ? ma1 : na, "MA 1", color=C_MA1, linewidth=1)
+plot(i_showMA ? ma2 : na, "MA 2", color=C_MA2, linewidth=2)
+plot(i_showMA ? ma3 : na, "MA 3", color=C_MA3, linewidth=2)
+plot(i_showMA ? ma4 : na, "MA 4", color=C_MA4, linewidth=3)
+
+// ============================================================================
+// LEVEL LINES & LABELS
+// ============================================================================
+fibStyle = switch i_fibLineStyle
+    "Solid" => line.style_solid
+    "Dashed" => line.style_dashed
+    => line.style_dotted
+ddStyle = switch i_ddLineStyle
+    "Solid" => line.style_solid
+    "Dashed" => line.style_dashed
+    => line.style_dotted
+labelX = bar_index - 5
+
+var line  l_ath  = na, var label lb_ath  = na
+var line  l_f236 = na, var label lb_f236 = na
+var line  l_f382 = na, var label lb_f382 = na
+var line  l_f500 = na, var label lb_f500 = na
+var line  l_f618 = na, var label lb_f618 = na
+var line  l_f786 = na, var label lb_f786 = na
+var line  l_dd1  = na, var label lb_dd1  = na
+var line  l_dd2  = na, var label lb_dd2  = na
+var line  l_dd3  = na, var label lb_dd3  = na
+var line  l_dd4  = na, var label lb_dd4  = na
+var line  l_dd5  = na, var label lb_dd5  = na
+
+if barstate.islast
+    if i_showATHLine and not na(ath)
+        line.delete(l_ath), label.delete(lb_ath)
+        l_ath  := line.new(bar_index - 200, ath, bar_index + 5, ath, extend=extend.both, color=C_PURPLE, style=line.style_solid, width=2)
+        lb_ath := label.new(labelX, ath, "ATH  " + f2(ath), style=label.style_none, color=color.new(C_PURPLE, 50), textcolor=C_PURPLE, size=size.normal)
+
+    if i_showFib and athSpan > 0
+        line.delete(l_f236), label.delete(lb_f236), line.delete(l_f382), label.delete(lb_f382)
+        line.delete(l_f500), label.delete(lb_f500), line.delete(l_f618), label.delete(lb_f618)
+        line.delete(l_f786), label.delete(lb_f786)
+        l_f236 := line.new(bar_index - 200, fib236, bar_index + 5, fib236, extend=extend.both, color=C_FIB_236, style=fibStyle, width=i_fibLineWidth)
+        lb_f236 := label.new(labelX, fib236, "Fib 23.6%  " + f2(fib236), style=label.style_none, color=color.new(C_FIB_236, 50), textcolor=C_FIB_236, size=size.normal)
+        l_f382 := line.new(bar_index - 200, fib382, bar_index + 5, fib382, extend=extend.both, color=C_FIB_382, style=fibStyle, width=i_fibLineWidth)
+        lb_f382 := label.new(labelX, fib382, "Fib 38.2%  " + f2(fib382), style=label.style_none, color=color.new(C_FIB_382, 50), textcolor=C_FIB_382, size=size.normal)
+        l_f500 := line.new(bar_index - 200, fib500, bar_index + 5, fib500, extend=extend.both, color=C_FIB_500, style=fibStyle, width=i_fibLineWidth)
+        lb_f500 := label.new(labelX, fib500, "Fib 50.0%  " + f2(fib500), style=label.style_none, color=color.new(C_FIB_500, 50), textcolor=C_FIB_500, size=size.normal)
+        l_f618 := line.new(bar_index - 200, fib618, bar_index + 5, fib618, extend=extend.both, color=C_FIB_618, style=fibStyle, width=i_fibLineWidth)
+        lb_f618 := label.new(labelX, fib618, "Fib 61.8%  " + f2(fib618), style=label.style_none, color=color.new(C_FIB_618, 50), textcolor=C_FIB_618, size=size.normal)
+        l_f786 := line.new(bar_index - 200, fib786, bar_index + 5, fib786, extend=extend.both, color=C_FIB_786, style=fibStyle, width=i_fibLineWidth)
+        lb_f786 := label.new(labelX, fib786, "Fib 78.6%  " + f2(fib786), style=label.style_none, color=color.new(C_FIB_786, 50), textcolor=C_FIB_786, size=size.normal)
+
+    if i_showDD and not na(ath) and ath > 0
+        line.delete(l_dd1), label.delete(lb_dd1), line.delete(l_dd2), label.delete(lb_dd2)
+        line.delete(l_dd3), label.delete(lb_dd3), line.delete(l_dd4), label.delete(lb_dd4)
+        line.delete(l_dd5), label.delete(lb_dd5)
+        l_dd1 := line.new(bar_index - 200, dd1, bar_index + 5, dd1, extend=extend.both, color=C_DD1, style=ddStyle, width=i_ddLineWidth)
+        lb_dd1 := label.new(labelX, dd1, dd1lbl + "  " + f2(dd1), style=label.style_none, color=color.new(C_DD1, 50), textcolor=C_DD1, size=size.normal)
+        l_dd2 := line.new(bar_index - 200, dd2, bar_index + 5, dd2, extend=extend.both, color=C_DD2, style=ddStyle, width=i_ddLineWidth)
+        lb_dd2 := label.new(labelX, dd2, dd2lbl + "  " + f2(dd2), style=label.style_none, color=color.new(C_DD2, 50), textcolor=C_DD2, size=size.normal)
+        l_dd3 := line.new(bar_index - 200, dd3, bar_index + 5, dd3, extend=extend.both, color=C_DD3, style=ddStyle, width=i_ddLineWidth)
+        lb_dd3 := label.new(labelX, dd3, dd3lbl + "  " + f2(dd3), style=label.style_none, color=color.new(C_DD3, 50), textcolor=C_DD3, size=size.normal)
+        l_dd4 := line.new(bar_index - 200, dd4, bar_index + 5, dd4, extend=extend.both, color=C_DD4, style=ddStyle, width=i_ddLineWidth)
+        lb_dd4 := label.new(labelX, dd4, dd4lbl + "  " + f2(dd4), style=label.style_none, color=color.new(C_DD4, 50), textcolor=C_DD4, size=size.normal)
+        l_dd5 := line.new(bar_index - 200, dd5, bar_index + 5, dd5, extend=extend.both, color=C_DD5, style=ddStyle, width=i_ddLineWidth)
+        lb_dd5 := label.new(labelX, dd5, dd5lbl + "  " + f2(dd5), style=label.style_none, color=color.new(C_DD5, 50), textcolor=C_DD5, size=size.normal)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+if i_showDash and barstate.islast
+    string tblPos = switch i_dashPos
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Bottom Right" => position.bottom_right
+        => position.bottom_left
+    string tblSize = switch i_dashSize
+        "Tiny" => size.tiny
+        "Normal" => size.normal
+        => size.small
+
+    var table dash = table.new(position.top_right, 5, 50, bgcolor=C_DASH_BG, border_width=1, border_color=C_GRAY)
+    table.set_position(dash, tblPos)
+    // --- Padding spacers (top, left, right) ---
+    table.cell(dash, 0, 0, "  ", text_size=tblSize, bgcolor=C_DASH_BG, text_color=C_DASH_BG)
+    table.cell(dash, 4, 0, "       ", text_size=tblSize, bgcolor=C_DASH_BG, text_color=C_DASH_BG)
+    table.cell(dash, 1, 0, "", text_size=tblSize, bgcolor=C_DASH_BG)
+    table.cell(dash, 2, 0, "", text_size=tblSize, bgcolor=C_DASH_BG)
+    table.cell(dash, 3, 0, "", text_size=tblSize, bgcolor=C_DASH_BG)
+    int r = 1
+
+    // --- Header ---
+    table.cell(dash, 1, r, "BLF — " + i_mode, text_color=C_PURPLE, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, syminfo.ticker, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, timeframe.period, text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    r += 1
+
+    table.cell(dash, 1, r, "Close", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(close), text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, "", text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    color ddClr = (not na(currentDD) and currentDD <= -20) ? C_BEAR : ((not na(currentDD) and currentDD <= -10) ? C_ORANGE : C_YELLOW)
+    table.cell(dash, 1, r, "Drawdown", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(currentDD) ? "N/A" : fPct(currentDD), text_color=ddClr, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, "from ATH", text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    color crossClr = crossBull ? C_BULL : C_BEAR
+    table.cell(dash, 1, r, crossName + " SMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, crossBull ? "BULLISH" : "BEARISH", text_color=crossClr, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, str.tostring(crossBars) + " bars", text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    if i_showVIX
+        color vixClr = na(vixVal) ? C_GRAY : (vixVal > 30 ? C_BEAR : (vixVal > 20 ? C_ORANGE : C_BULL))
+        table.cell(dash, 1, r, "VIX", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+        table.cell(dash, 2, r, na(vixVal) ? "N/A" : f2(vixVal), text_color=vixClr, text_size=tblSize, text_halign=text.align_right)
+        table.cell(dash, 3, r, vixTier, text_color=vixClr, text_size=tblSize, text_halign=text.align_right)
+        r += 1
+
+    // --- Column Headers ---
+    table.cell(dash, 1, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, "Price", text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "Dist", text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    r += 1
+
+    // --- Drawdown ---
+    table.cell(dash, 1, r, "DRAWDOWN", text_color=C_DD3, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    r += 1
+    color cd1 = close >= dd1 ? C_BULL : C_DD1
+    table.cell(dash, 1, r, dd1lbl, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(dd1), text_color=cd1, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(dd1, close)), text_color=cd1, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cd2 = close >= dd2 ? C_BULL : C_DD2
+    table.cell(dash, 1, r, dd2lbl, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(dd2), text_color=cd2, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(dd2, close)), text_color=cd2, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cd3 = close >= dd3 ? C_BULL : C_DD3
+    table.cell(dash, 1, r, dd3lbl, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(dd3), text_color=cd3, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(dd3, close)), text_color=cd3, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cd4 = close >= dd4 ? C_BULL : C_DD4
+    table.cell(dash, 1, r, dd4lbl, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(dd4), text_color=cd4, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(dd4, close)), text_color=cd4, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cd5 = close >= dd5 ? C_BULL : C_DD5
+    table.cell(dash, 1, r, dd5lbl, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(dd5), text_color=cd5, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(dd5, close)), text_color=cd5, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // --- Fibonacci ---
+    table.cell(dash, 1, r, "FIBONACCI", text_color=C_FIB_382, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, "→ " + f2(swingLow), text_color=C_DASH_DIM, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    r += 1
+    color cf236 = close >= fib236 ? C_BULL : C_FIB_236
+    table.cell(dash, 1, r, "23.6%", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(fib236), text_color=cf236, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(fib236, close)), text_color=cf236, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cf382 = close >= fib382 ? C_BULL : C_FIB_382
+    table.cell(dash, 1, r, "38.2%", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(fib382), text_color=cf382, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(fib382, close)), text_color=cf382, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cf500 = close >= fib500 ? C_BULL : C_FIB_500
+    table.cell(dash, 1, r, "50.0%", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(fib500), text_color=cf500, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(fib500, close)), text_color=cf500, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cf618 = close >= fib618 ? C_BULL : C_FIB_618
+    table.cell(dash, 1, r, "61.8%", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(fib618), text_color=cf618, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(fib618, close)), text_color=cf618, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cf786 = close >= fib786 ? C_BULL : C_FIB_786
+    table.cell(dash, 1, r, "78.6%", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, f2(fib786), text_color=cf786, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, fPct(distPct(fib786, close)), text_color=cf786, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // --- Moving Averages ---
+    table.cell(dash, 1, r, "MOVING AVGS", text_color=C_MA2, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    r += 1
+    color cm1 = close >= nz(ma1) ? C_BULL : C_MA1
+    table.cell(dash, 1, r, ma1name + " SMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(ma1) ? "N/A" : f2(ma1), text_color=cm1, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, na(ma1) ? "" : fPct(distPct(ma1, close)), text_color=cm1, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cm2 = close >= nz(ma2) ? C_BULL : C_MA2
+    table.cell(dash, 1, r, ma2name + " SMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(ma2) ? "N/A" : f2(ma2), text_color=cm2, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, na(ma2) ? "" : fPct(distPct(ma2, close)), text_color=cm2, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cm3 = close >= nz(ma3) ? C_BULL : C_MA3
+    table.cell(dash, 1, r, ma3name + " SMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(ma3) ? "N/A" : f2(ma3), text_color=cm3, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, na(ma3) ? "" : fPct(distPct(ma3, close)), text_color=cm3, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color cm4 = close >= nz(ma4) ? C_BULL : C_MA4
+    table.cell(dash, 1, r, ma4name + " SMA", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(ma4) ? "N/A" : f2(ma4), text_color=cm4, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, na(ma4) ? "" : fPct(distPct(ma4, close)), text_color=cm4, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // --- Bottom Signals ---
+    color sigHdrClr = sigCount >= 4 ? C_BEAR : (sigCount >= 2 ? C_ORANGE : C_BULL)
+    table.cell(dash, 1, r, "BOTTOM SIGNALS", text_color=sigHdrClr, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, str.tostring(sigCount) + "/6", text_color=sigHdrClr, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    r += 1
+
+    color s1c = s1fired ? C_BEAR : C_BULL
+    table.cell(dash, 1, r, s1name, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, s1valStr, text_color=s1c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s1fired ? "FIRED" : "—", text_color=s1fired ? C_BEAR : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color s2c = s2fired ? C_BEAR : C_BULL
+    table.cell(dash, 1, r, s2name, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, s2valStr, text_color=s2c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s2fired ? "FIRED" : "—", text_color=s2fired ? C_BEAR : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color s3c = s3fired ? C_BULL : C_NEUTRAL
+    table.cell(dash, 1, r, s3name, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, s3valStr, text_color=s3c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s3fired ? "FIRED" : "—", text_color=s3fired ? C_BULL : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color s4c = s4fired ? C_BEAR : C_BULL
+    table.cell(dash, 1, r, s4name, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, s4valStr, text_color=s4c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s4fired ? "FIRED" : "—", text_color=s4fired ? C_BEAR : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color s5c = s5fired ? C_BEAR : C_BULL
+    table.cell(dash, 1, r, s5name, text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, s5valStr, text_color=s5c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s5fired ? "FIRED" : "—", text_color=s5fired ? C_BEAR : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+    color s6c = s6fired ? C_BEAR : C_NEUTRAL
+    table.cell(dash, 1, r, "Vol (> 2x)", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left)
+    table.cell(dash, 2, r, na(volRatio) ? "N/A" : (f2(volRatio) + "x"), text_color=s6c, text_size=tblSize, text_halign=text.align_right)
+    table.cell(dash, 3, r, s6fired ? "FIRED" : "—", text_color=s6fired ? C_BEAR : C_DASH_DIM, text_size=tblSize, text_halign=text.align_right)
+    r += 1
+
+    // --- Summary ---
+    string assessment = switch
+        sigCount >= 5 => "EXTREME"
+        sigCount >= 4 => "ELEVATED"
+        sigCount >= 3 => "MODERATE"
+        sigCount >= 1 => "LOW"
+        => "NONE"
+    color assessClr = switch
+        sigCount >= 5 => C_BEAR
+        sigCount >= 4 => C_ORANGE
+        sigCount >= 3 => C_YELLOW
+        sigCount >= 1 => C_NEUTRAL
+        => C_BULL
+
+    table.cell(dash, 1, r, "Bottom Proximity", text_color=C_DASH_TEXT, text_size=tblSize, text_halign=text.align_left, bgcolor=C_DASH_HDR)
+    table.cell(dash, 2, r, assessment, text_color=assessClr, text_size=tblSize, text_halign=text.align_right, bgcolor=C_DASH_HDR)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_HDR)
+    r += 1
+    // --- Bottom padding spacer ---
+    table.cell(dash, 1, r, "", text_size=tblSize, bgcolor=C_DASH_BG)
+    table.cell(dash, 2, r, "", text_size=tblSize, bgcolor=C_DASH_BG)
+    table.cell(dash, 3, r, "", text_size=tblSize, bgcolor=C_DASH_BG)
+
+// ============================================================================
+// END
+// ============================================================================
