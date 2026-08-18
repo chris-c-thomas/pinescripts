@@ -1,3 +1,5 @@
+
+
 # CHRD Indicator Suite of TradingView Pine Scripts
 
 A collection of Pine Script v6 indicators for TradingView, organized into purpose-built families that span the full analytical workflow including strategic trend assessment, correction/re-entry timing, intraday context, and intraday execution signals — from desktop multi-chart layouts down to iPhone pocket viewing.
@@ -130,7 +132,7 @@ Ticker-agnostic within the liquid US equity ETF family — auto-detects the appr
 4. Click **Add to chart**.
 5. Configure inputs through the indicator settings dialog as needed.
 
-Each script's documentation file covers all available inputs, dashboard layout, alert configuration, and tuning recommendations for its intended timeframe.
+Each script's documentation file covers all available inputs, dashboard layout, alert configuration where applicable, and tuning recommendations for its intended timeframe.
 
 ---
 
